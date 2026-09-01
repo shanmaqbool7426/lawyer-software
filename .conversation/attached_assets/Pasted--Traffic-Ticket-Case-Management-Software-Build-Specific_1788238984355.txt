@@ -1,0 +1,181 @@
+# Traffic Ticket Case Management Software — Build Specification
+
+**Purpose of this document:** This is a complete, ready-to-use prompt/spec. Paste this whole document into Claude Code, another AI coding tool, or hand it to a developer, and it has everything needed to build the software end-to-end — no back-and-forth needed to fill gaps.
+
+---
+
+## 1. Project Context
+
+Build a web-based case management system for an Ontario, Canada traffic ticket paralegal/law firm (Highway Traffic Act defence — speeding, careless driving, stunt driving, distracted driving, stop sign violations, etc.). The firm currently tracks everything in a single giant Excel sheet with 10,000+ rows, which has become hard to search, has no reminders, and mixes client data, case data, payment data, and status notes into merged/free-text cells.
+
+The new software replaces this spreadsheet with a structured, searchable, single-admin web application.
+
+**User:** One admin/owner (the paralegal/firm owner). No multi-user roles needed for v1, but design the data layer so staff accounts can be added later without a rebuild.
+
+---
+
+## 2. Core Entities & Data Model
+
+### 2.1 Client
+- `id` (UUID)
+- `full_name` (text, required)
+- `phone` (text, optional)
+- `email` (text, optional)
+- `lead_source_channel` (enum, required) — how the client found the firm:
+  - `Referral` — an existing client or contact sent them
+  - `Website` — contact form / free case review form on the firm's own site
+  - `Google Search` — organic search
+  - `Google Ads`
+  - `Meta Ads` — Facebook/Instagram ads
+  - `AI Assistant / Chatbot` — came through an AI tool (e.g. ChatGPT, Claude, a website chatbot) recommending or answering about the firm
+  - `Walk-in`
+  - `Repeat Client` — has used the firm before
+  - `Other`
+- `lead_source_detail` (text, optional) — extra detail depending on the channel above, e.g. if `Referral`: the referrer's name ("brother of Rizwan"); if `Meta Ads`: which campaign/ad; if `AI Assistant / Chatbot`: which tool if known
+- `created_at`
+
+### 2.2 Case
+- `id` (UUID)
+- `case_number` (auto-incrementing integer, sequential, unique, admin can set the starting number once during setup to continue from the old sheet's numbering — e.g. start at 1462)
+- `client_id` (reference to Client `_id`)
+- `intake_date` (date, required) — when the client came to the firm
+- `offence_date` (date, required) — when the ticket/violation occurred
+- `ticket_number` (text) — the file/ticket number, e.g. "8725013Z"
+- `statute_code` (text) — offence/statute code, e.g. "564-133.a4", "2.1.a.ii"
+- `offence_description` (text) — free text, e.g. "improper right turn", "trespass to property act", "driving while licence suspended"
+- `office_code` (text) — the internal staff/office reference code seen in the old sheet (e.g. "4862")
+- `court_location` (text, optional)
+- `court_date` (date, optional, repeatable — see 2.5 Court Dates)
+- `status` (enum, required, default `Open`):
+  - `Open` — new, no action yet
+  - `Disclosure Requested` — waiting on prosecutor disclosure
+  - `Filed` — court election / paperwork filed
+  - `Resummoned` — court missed the original date, needs re-summon (as seen in the old sheet: "call the court, they said going to resummon")
+  - `Awaiting Trial`
+  - `Withdrawn` — charge withdrawn (seen in sheet as "w/d")
+  - `Resolved` — reduced/settled
+  - `Closed`
+- `total_fee` (decimal) — total amount the firm charges the client
+- `amount_received` (decimal, calculated as sum of linked Payments — see 2.3)
+- `balance_owing` (calculated: `total_fee - amount_received`)
+- `next_follow_up_date` (date, optional) — for reminders (matches the old sheet's manual "call again around 15th April" notes)
+- `created_at`, `updated_at`
+
+### 2.3 Payment
+- `id` (UUID)
+- `case_id` (reference to Case `_id`)
+- `amount` (decimal, required)
+- `date` (date, required, default today)
+- `method` (enum, optional): Cash, E-transfer, Card, Cheque, Other
+- `note` (text, optional) — e.g. "will pay the rest 100 on 1st Sep"
+
+### 2.4 Case Note / Activity Log (stored as an embedded array inside the Case document in MongoDB)
+- `id` (UUID)
+- `case_id` (implicit — embedded inside its parent Case document)
+- `date` (datetime, auto)
+- `text` (text, required) — free text status updates, e.g. "on 13/05/2026 I did call the court. They said going to resummon"
+- `author` (optional, for future multi-user)
+
+This replaces the red/purple free-text status notes currently scattered in column G of the sheet. Every status change should be timestamped automatically here.
+
+### 2.5 Court Date (embedded array on the Case document, same pattern as notes)
+- `id`
+- `date`
+- `outcome` (text, optional) — e.g. "adjourned", "dismissed", "$226 fine", "PD 340" (partial dismissal)
+
+---
+
+## 3. Required Features
+
+### 3.1 Dashboard (landing page)
+- Total active cases
+- Total outstanding balance across all cases (sum of `balance_owing` where status is not Withdrawn/Resolved/Closed)
+- Count of cases where `next_follow_up_date` is today or overdue
+- A short list/table of cases needing attention today, sorted by most overdue first
+- Quick "New Case" action always visible
+
+### 3.2 Case List / Search
+- Full-text search across: client name, ticket number, statute code, case number, offence description
+- Filter by: status, date range (intake date or offence date), referral source, whether balance is outstanding
+- Sortable columns: case number, client name, status, balance, next follow-up
+- Each row shows: case #, client name, ticket #, offence, status badge, balance, next follow-up date (highlighted if overdue)
+
+### 3.3 New Case Form
+- All Case fields from section 2.2 (client can be selected from existing clients via search-as-you-type, or created inline if new)
+- If creating a new client inline: must pick `lead_source_channel` (dropdown, required) and optionally fill `lead_source_detail`
+- Optional first note field to log why the client came in
+
+### 3.4 Case Detail Page
+- Editable header: client info, ticket/statute info, dates, office code
+- Status dropdown — every status change is auto-logged as a note ("Status changed from Open to Resummoned")
+- Financial panel: total fee, running list of payments, balance owing, a quick "record payment" input
+- Notes/activity timeline: newest first, add-note box, timestamps
+- Follow-up date field with a simple way to snooze/update it
+- Delete case (with confirmation) — for admin cleanup only, keep audit trail if possible instead of hard delete (soft delete flag recommended)
+
+### 3.5 Reminders / Follow-ups
+- Any case with `next_follow_up_date` <= today and status not in (Withdrawn, Resolved, Closed) shows up on the Dashboard "needs attention" list
+- v1: in-app only. v2 (future): daily email or WhatsApp summary of due follow-ups (the firm's site already lists a WhatsApp contact channel, so this fits naturally later)
+
+### 3.6 Reports (minimum for v1)
+- Outstanding balances report: list of all cases with balance_owing > 0, exportable to CSV
+- Lead source report: count of cases per `lead_source_channel` (Referral vs Website vs Google Ads vs Meta Ads vs AI Assistant vs Walk-in, etc.), so the firm can see which marketing channel is actually bringing in paying clients — this matters because the firm runs a website with ads/SEO content and a "Free Case Review" form, so knowing whether leads come from ads, search, or word-of-mouth directly affects where they spend marketing budget
+- Within `Referral`, a breakdown of top referrers (which past client/contact sends the most new business) — useful for a referral-thank-you or incentive program
+- Cases-by-status count
+
+### 3.7 Data Import (one-time, important)
+- The firm has 10,000+ existing rows in Excel. Build a one-time CSV/Excel import tool that:
+  - Lets the admin map old sheet columns to new fields (client name, dates, ticket/statute, fee/payment notes, status notes)
+  - Since old data is messy (free text amounts like "200 received. 89ra", mixed dates), the import should bring rows in as raw Case + one big opening Note per row rather than trying to perfectly parse every historic amount — perfect parsing of 10,000 free-text legacy rows is not realistic. New cases going forward use the structured fields properly.
+
+---
+
+## 4. Non-Functional Requirements
+
+- **Platform:** Web app, accessible from any browser (desktop primarily, should also be usable on a phone/tablet since the admin may check follow-ups on the go)
+- **Auth:** Single admin login (email + password), with the data model ready to support additional staff accounts later without restructuring
+- **Data storage:** A real hosted database (not local-only), so the data is safe, backed up, and accessible from anywhere — this is the main reason to move off Excel
+- **Backups:** Automatic daily backup of the database
+- **Currency/locale:** Canadian dollars (CAD), Canadian date conventions
+- **Performance:** Must comfortably handle 10,000+ historic cases plus ongoing growth, with fast search
+- **Security/privacy:** This is legal case data (client names, offence details, payment amounts) — data should not be publicly accessible, should be encrypted at rest if the hosting provider supports it, and access should require login
+
+---
+
+## 5. Tech Stack (fixed for this build)
+
+- **Frontend:** React + Vite (same visual direction as the existing prototype: clean ledger/docket style, navy + parchment palette, serif headers for a legal-document feel, sans-serif data tables). Use React Router for pages (Dashboard, Cases, Case Detail, Clients, Reports), and a lightweight state/data-fetching layer (e.g. TanStack Query) for talking to the API.
+- **Backend:** Node.js + Express — REST API with routes for `/clients`, `/cases`, `/payments`, `/notes`, `/reports`. Use middleware for auth (JWT-based session) and request validation (e.g. Zod or Joi).
+- **Database:** MongoDB (via Mongoose for schema modeling)
+  - `clients` collection — matches section 2.1
+  - `cases` collection — matches section 2.2, stores `client_id` as a reference (ObjectId) to `clients`
+  - `payments` collection — matches section 2.3, referenced by `case_id`
+  - `notes` collection — matches section 2.4, referenced by `case_id` (alternative: embed notes as an array of subdocuments directly inside the `cases` document, since notes are always read/written together with their case — this is usually simpler and faster in MongoDB than a separate collection; use embedded subdocuments for `notes` and `court_dates`, and a separate `payments` collection since payment history may later need firm-wide financial reporting across cases)
+  - Add indexes on: `cases.case_number` (unique), `cases.status`, `cases.next_follow_up_date`, and a text index across `clients.full_name`, `cases.ticket_number`, `cases.statute_code` for the search feature in 3.2
+- **Hosting:** Vercel/Netlify for the React+Vite frontend, Render/Railway (or a small VPS) for the Node+Express API, MongoDB Atlas (free/low tier is enough at this scale) for the database — Atlas also handles automatic backups, covering the requirement in section 4
+- **Auth:** Custom email+password auth with JWT, or Passport.js — simple, since it's a single-admin app for v1
+
+---
+
+## 6. Explicitly Out of Scope for v1
+
+- Multi-user roles/permissions (design for it, don't build it yet)
+- Automated court-date scraping/integration with Ontario court systems
+- Client-facing portal (clients logging in themselves)
+- Automated SMS/email reminders (log it, send later manually; automate in v2)
+- Perfect parsing of every historic free-text sheet entry — legacy data comes in as-is with a note, not force-fit into structured fields
+
+---
+
+## 7. Reference: What the Old Excel Sheet Looked Like (for context when importing/mapping data)
+
+Columns in the legacy sheet, left to right:
+1. Serial/case count number
+2. Intake date
+3. Offence date
+4. Client name (sometimes with referral note attached, e.g. "Rishad Sahibi / brother of Rizwan")
+5. Office/staff code (e.g. 4862, 4863)
+6. Ticket/file number + statute code + offence description, stacked in the same column across multiple lines
+7. Free-text status/financial notes in red or purple: payments received, balances, "filed", "w/d" (withdrawn), court call outcomes, follow-up reminders written as prose (e.g. "on 13/05/2026 I did call the court. They said going to resummon")
+
+This is the exact mess the new structured Case / Payment / Note tables above are designed to replace.

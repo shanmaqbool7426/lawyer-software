@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { seedTrafficData } from "./lib/traffic";
 
 const rawPort = process.env["PORT"];
 
@@ -14,6 +15,8 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
+
+seedTrafficData().catch((err) => logger.error({ err }, "Unable to seed traffic docket"));
 
 app.listen(port, (err) => {
   if (err) {

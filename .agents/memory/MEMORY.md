@@ -1,0 +1,1 @@
+- [Clerk setup](clerk-setup.md) — managed auth uses browser sessions; install dependencies at the affected workspace package rather than the monorepo root.

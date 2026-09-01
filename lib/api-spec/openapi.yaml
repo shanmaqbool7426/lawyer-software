@@ -10,6 +10,18 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: dashboard
+    description: Dashboard summary operations
+  - name: clients
+    description: Client records
+  - name: cases
+    description: Case records
+  - name: payments
+    description: Case payments
+  - name: reports
+    description: Reporting and exports
+  - name: imports
+    description: Legacy data import
 paths:
   /healthz:
     get:
@@ -24,6 +36,276 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [dashboard]
+      summary: Get dashboard summary
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+  /clients:
+    get:
+      operationId: listClients
+      tags: [clients]
+      summary: List clients
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Client list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Client"
+    post:
+      operationId: createClient
+      tags: [clients]
+      summary: Create a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientInput"
+      responses:
+        "201":
+          description: Created client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+  /cases:
+    get:
+      operationId: listCases
+      tags: [cases]
+      summary: Search and filter cases
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: source
+          schema:
+            type: string
+        - in: query
+          name: outstanding
+          schema:
+            type: boolean
+        - in: query
+          name: dateFrom
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: dateTo
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Case list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Case"
+    post:
+      operationId: createCase
+      tags: [cases]
+      summary: Create a case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaseInput"
+      responses:
+        "201":
+          description: Created case
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Case"
+  /cases/{id}:
+    get:
+      operationId: getCase
+      tags: [cases]
+      summary: Get case detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Case detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseDetail"
+        "404":
+          description: Case not found
+    patch:
+      operationId: updateCase
+      tags: [cases]
+      summary: Update a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaseUpdate"
+      responses:
+        "200":
+          description: Updated case
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Case"
+    delete:
+      operationId: deleteCase
+      tags: [cases]
+      summary: Soft-delete a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Case deleted
+  /cases/{id}/payments:
+    post:
+      operationId: createPayment
+      tags: [payments]
+      summary: Record a payment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentInput"
+      responses:
+        "201":
+          description: Created payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+  /cases/{id}/notes:
+    post:
+      operationId: createNote
+      tags: [cases]
+      summary: Add a case note
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteInput"
+      responses:
+        "201":
+          description: Created note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+  /reports/summary:
+    get:
+      operationId: getReportsSummary
+      tags: [reports]
+      summary: Get report summaries
+      responses:
+        "200":
+          description: Report summaries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportsSummary"
+  /reports/outstanding.csv:
+    get:
+      operationId: exportOutstanding
+      tags: [reports]
+      summary: Export outstanding balances as CSV
+      responses:
+        "200":
+          description: CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+  /imports/preview:
+    post:
+      operationId: previewImport
+      tags: [imports]
+      summary: Preview legacy rows for import
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportInput"
+      responses:
+        "200":
+          description: Import preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportPreview"
+  /imports/commit:
+    post:
+      operationId: commitImport
+      tags: [imports]
+      summary: Commit legacy rows
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportInput"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +315,195 @@ components:
           type: string
       required:
         - status
+    Client:
+      type: object
+      required: [id, fullName, leadSourceChannel, createdAt]
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        phone: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        leadSourceChannel: { type: string }
+        leadSourceDetail: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+    ClientInput:
+      type: object
+      required: [fullName, leadSourceChannel]
+      properties:
+        fullName: { type: string, minLength: 1 }
+        phone: { type: string }
+        email: { type: string }
+        leadSourceChannel: { type: string, minLength: 1 }
+        leadSourceDetail: { type: string }
+    Case:
+      type: object
+      required: [id, caseNumber, clientId, clientName, intakeDate, offenceDate, status, totalFee, amountReceived, balanceOwing, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        caseNumber: { type: number }
+        clientId: { type: string }
+        clientName: { type: string }
+        phone: { type: ["string", "null"] }
+        ticketNumber: { type: ["string", "null"] }
+        statuteCode: { type: ["string", "null"] }
+        offenceDescription: { type: ["string", "null"] }
+        officeCode: { type: ["string", "null"] }
+        courtLocation: { type: ["string", "null"] }
+        intakeDate: { type: string, format: date }
+        offenceDate: { type: string, format: date }
+        status: { type: string }
+        totalFee: { type: number }
+        amountReceived: { type: number }
+        balanceOwing: { type: number }
+        nextFollowUpDate: { type: ["string", "null"], format: date }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CaseInput:
+      type: object
+      required: [clientId, intakeDate, offenceDate, status, totalFee]
+      properties:
+        clientId: { type: string }
+        intakeDate: { type: string, format: date }
+        offenceDate: { type: string, format: date }
+        ticketNumber: { type: string }
+        statuteCode: { type: string }
+        offenceDescription: { type: string }
+        officeCode: { type: string }
+        courtLocation: { type: string }
+        status: { type: string }
+        totalFee: { type: number, minimum: 0 }
+        nextFollowUpDate: { type: string, format: date }
+        firstNote: { type: string }
+    CaseUpdate:
+      type: object
+      properties:
+        intakeDate: { type: string, format: date }
+        offenceDate: { type: string, format: date }
+        ticketNumber: { type: string }
+        statuteCode: { type: string }
+        offenceDescription: { type: string }
+        officeCode: { type: string }
+        courtLocation: { type: string }
+        status: { type: string }
+        totalFee: { type: number, minimum: 0 }
+        nextFollowUpDate: { type: ["string", "null"], format: date }
+    Payment:
+      type: object
+      required: [id, caseId, amount, date]
+      properties:
+        id: { type: string }
+        caseId: { type: string }
+        amount: { type: number }
+        date: { type: string, format: date }
+        method: { type: ["string", "null"] }
+        note: { type: ["string", "null"] }
+    PaymentInput:
+      type: object
+      required: [amount, date]
+      properties:
+        amount: { type: number, minimum: 0.01 }
+        date: { type: string, format: date }
+        method: { type: string }
+        note: { type: string }
+    Note:
+      type: object
+      required: [id, text, createdAt]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        author: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+    NoteInput:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1 }
+    CourtDate:
+      type: object
+      required: [id, date]
+      properties:
+        id: { type: string }
+        date: { type: string, format: date }
+        outcome: { type: ["string", "null"] }
+    CaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/Case"
+        - type: object
+          required: [notes, courtDates, payments]
+          properties:
+            notes:
+              type: array
+              items: { $ref: "#/components/schemas/Note" }
+            courtDates:
+              type: array
+              items: { $ref: "#/components/schemas/CourtDate" }
+            payments:
+              type: array
+              items: { $ref: "#/components/schemas/Payment" }
+    Dashboard:
+      type: object
+      required: [activeCases, outstandingBalance, dueFollowUps, attentionCases, statusCounts]
+      properties:
+        activeCases: { type: number }
+        outstandingBalance: { type: number }
+        dueFollowUps: { type: number }
+        attentionCases:
+          type: array
+          items: { $ref: "#/components/schemas/Case" }
+        statusCounts:
+          type: object
+          additionalProperties: { type: number }
+    ReportsSummary:
+      type: object
+      required: [leadSources, referralBreakdown, statusCounts, outstandingCases]
+      properties:
+        leadSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportCount"
+        referralBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportCount"
+        statusCounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportCount"
+        outstandingCases:
+          type: array
+          items: { $ref: "#/components/schemas/Case" }
+    ReportCount:
+      type: object
+      required: [label, count]
+      properties:
+        label: { type: string }
+        count: { type: number }
+    ImportInput:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items:
+            type: object
+            additionalProperties: { type: string }
+        mapping:
+          type: object
+          additionalProperties: { type: string }
+    ImportPreview:
+      type: object
+      required: [rowCount, sample]
+      properties:
+        rowCount: { type: number }
+        sample:
+          type: array
+          items:
+            type: object
+            additionalProperties: { type: string }
+    ImportResult:
+      type: object
+      required: [imported, skipped]
+      properties:
+        imported: { type: number }
+        skipped: { type: number }
 

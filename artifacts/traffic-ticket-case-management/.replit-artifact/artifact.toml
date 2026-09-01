@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Traffic Ticket Case Management"
+description = "A secure browser-based case management workspace for an Ontario traffic-ticket defence practice, replacing a legacy spreadsheet with searchable cases, payment tracking, reminders, reports, and structured intake data."
+version = "1.0.0"
+id = "artifacts/traffic-ticket-case-management"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19391
+
+[services.development]
+run = "pnpm --filter @workspace/traffic-ticket-case-management run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/traffic-ticket-case-management", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/traffic-ticket-case-management/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19391"
+BASE_PATH = "/"
