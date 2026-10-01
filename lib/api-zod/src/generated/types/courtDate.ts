@@ -11,4 +11,6 @@ export interface CourtDate {
   date: Date;
   /** @nullable */
   outcome?: string | null;
+  /** @nullable */
+  notes?: string | null;
 }

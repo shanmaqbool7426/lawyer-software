@@ -22,6 +22,7 @@ export const HealthCheckResponse = zod.object({
  */
 export const GetDashboardResponse = zod.object({
   "activeCases": zod.number(),
+  "closedCases": zod.number(),
   "outstandingBalance": zod.number(),
   "dueFollowUps": zod.number(),
   "attentionCases": zod.array(zod.object({
@@ -35,37 +36,192 @@ export const GetDashboardResponse = zod.object({
   "offenceDescription": zod.string().nullish(),
   "officeCode": zod.string().nullish(),
   "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.string().nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
   "intakeDate": zod.coerce.date(),
   "offenceDate": zod.coerce.date(),
   "status": zod.string(),
   "totalFee": zod.number(),
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "isFullyPaid": zod.boolean(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
   "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),
-  "statusCounts": zod.record(zod.string(), zod.number())
+  "statusCounts": zod.record(zod.string(), zod.number()),
+  "totalFees": zod.number(),
+  "totalCollected": zod.number(),
+  "recentPayments": zod.array(zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "amount": zod.number(),
+  "date": zod.coerce.date(),
+  "method": zod.string().nullish(),
+  "note": zod.string().nullish()
+})),
+  "courtDates": zod.array(zod.object({
+  "caseId": zod.string(),
+  "caseNumber": zod.number(),
+  "clientName": zod.string(),
+  "date": zod.coerce.date(),
+  "outcome": zod.string().nullish()
+}))
 })
+
+
+/**
+ * Returns the workspaces visible to the caller. With Clerk enabled this is the caller's active organization; in local demo mode it lists every workspace so the switcher can offer all of them.
+ * @summary List workspaces
+ */
+export const ListWorkspacesResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "calendarToken": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})),
+  "defaultWorkspaceId": zod.string().nullable()
+})
+
+
+/**
+ * Creates a new tenant. When Clerk is enabled, pass the Clerk organization ID as externalId so the workspace lines up with the session's org claim.
+ * @summary Create a workspace
+ */
+export const createWorkspaceBodyNameMax = 80;
+
+
+
+export const CreateWorkspaceBody = zod.object({
+  "name": zod.string().min(1).max(createWorkspaceBodyNameMax),
+  "externalId": zod.string().optional().describe('Clerk organization ID to link when Clerk is enabled')
+})
+
+export const CreateWorkspaceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "calendarToken": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get the in-app notification feed
+ */
+export const GetNotificationsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "kind": zod.enum(['court-date', 'follow-up', 'outstanding', 'signature']),
+  "caseId": zod.string(),
+  "caseNumber": zod.number(),
+  "clientName": zod.string(),
+  "title": zod.string(),
+  "detail": zod.string().nullish(),
+  "date": zod.coerce.date().nullable(),
+  "days": zod.number()
+})),
+  "total": zod.number()
+})
+
+
+/**
+ * @summary Get the workspace calendar feed details
+ */
+export const GetCalendarFeedResponse = zod.object({
+  "token": zod.string(),
+  "url": zod.string()
+})
+
+
+/**
+ * @summary Regenerate the workspace calendar feed token
+ */
+export const RegenerateCalendarFeedResponse = zod.object({
+  "token": zod.string(),
+  "url": zod.string()
+})
+
+
+/**
+ * Public endpoint — the token authorizes access.
+ * @summary Subscribe to the workspace calendar (ICS)
+ */
+export const GetCalendarFeedFileParams = zod.object({
+  "token": zod.coerce.string()
+})
+
+export const GetCalendarFeedFileResponse = zod.unknown()
 
 
 /**
  * @summary List clients
  */
+export const listClientsQueryPageDefault = 1;
+
+export const listClientsQueryLimitDefault = 20;
+export const listClientsQueryLimitMax = 100;
+
+
+
 export const ListClientsQueryParams = zod.object({
-  "search": zod.coerce.string().optional()
+  "search": zod.coerce.string().optional(),
+  "page": zod.coerce.number().min(1).default(listClientsQueryPageDefault),
+  "limit": zod.coerce.number().min(1).max(listClientsQueryLimitMax).default(listClientsQueryLimitDefault)
 })
 
-export const ListClientsResponseItem = zod.object({
+export const ListClientsResponse = zod.object({
+  "data": zod.array(zod.object({
   "id": zod.string(),
   "fullName": zod.string(),
   "phone": zod.string().nullish(),
   "email": zod.string().nullish(),
   "leadSourceChannel": zod.string(),
   "leadSourceDetail": zod.string().nullish(),
+  "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
   "createdAt": zod.coerce.date()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
 })
-export const ListClientsResponse = zod.array(ListClientsResponseItem)
 
 
 /**
@@ -90,23 +246,118 @@ export const CreateClientResponse = zod.object({
   "email": zod.string().nullish(),
   "leadSourceChannel": zod.string(),
   "leadSourceDetail": zod.string().nullish(),
+  "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
   "createdAt": zod.coerce.date()
 })
 
 
 /**
+ * @summary Get a client by ID
+ */
+export const GetClientParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetClientResponse = zod.object({
+  "id": zod.string(),
+  "fullName": zod.string(),
+  "phone": zod.string().nullish(),
+  "email": zod.string().nullish(),
+  "leadSourceChannel": zod.string(),
+  "leadSourceDetail": zod.string().nullish(),
+  "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Update a client
+ */
+export const UpdateClientParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+
+
+
+
+export const UpdateClientBody = zod.object({
+  "fullName": zod.string().min(1).optional(),
+  "phone": zod.string().optional(),
+  "email": zod.string().optional(),
+  "leadSourceChannel": zod.string().min(1).optional(),
+  "leadSourceDetail": zod.string().optional()
+})
+
+export const UpdateClientResponse = zod.object({
+  "id": zod.string(),
+  "fullName": zod.string(),
+  "phone": zod.string().nullish(),
+  "email": zod.string().nullish(),
+  "leadSourceChannel": zod.string(),
+  "leadSourceDetail": zod.string().nullish(),
+  "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * Refuses with 409 while the client still has non-deleted cases.
+ * @summary Soft-delete a client
+ */
+export const DeleteClientParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DeleteClientResponse = zod.void()
+
+
+/**
+ * @summary Issue or rotate a client portal link
+ */
+export const CreatePortalLinkParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const CreatePortalLinkResponse = zod.object({
+  "token": zod.string()
+})
+
+
+/**
+ * @summary Revoke a client portal link
+ */
+export const RevokePortalLinkParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const RevokePortalLinkResponse = zod.void()
+
+
+/**
  * @summary Search and filter cases
  */
+export const listCasesQueryPageDefault = 1;
+
+export const listCasesQueryLimitDefault = 20;
+export const listCasesQueryLimitMax = 100;
+
+
+
 export const ListCasesQueryParams = zod.object({
   "search": zod.coerce.string().optional(),
   "status": zod.coerce.string().optional(),
   "source": zod.coerce.string().optional(),
   "outstanding": zod.coerce.boolean().optional(),
-  "dateFrom": zod.date().optional(),
-  "dateTo": zod.date().optional()
+  "clientId": zod.coerce.string().optional(),
+  "dateFrom": zod.coerce.date().optional(),
+  "dateTo": zod.coerce.date().optional(),
+  "page": zod.coerce.number().min(1).default(listCasesQueryPageDefault),
+  "limit": zod.coerce.number().min(1).max(listCasesQueryLimitMax).default(listCasesQueryLimitDefault)
 })
 
-export const ListCasesResponseItem = zod.object({
+export const ListCasesResponse = zod.object({
+  "data": zod.array(zod.object({
   "id": zod.string(),
   "caseNumber": zod.number(),
   "clientId": zod.string(),
@@ -117,17 +368,61 @@ export const ListCasesResponseItem = zod.object({
   "offenceDescription": zod.string().nullish(),
   "officeCode": zod.string().nullish(),
   "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.string().nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
   "intakeDate": zod.coerce.date(),
   "offenceDate": zod.coerce.date(),
   "status": zod.string(),
   "totalFee": zod.number(),
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "isFullyPaid": zod.boolean(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
   "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
+})),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number()
 })
-export const ListCasesResponse = zod.array(ListCasesResponseItem)
 
 
 /**
@@ -146,9 +441,49 @@ export const CreateCaseBody = zod.object({
   "offenceDescription": zod.string().optional(),
   "officeCode": zod.string().optional(),
   "courtLocation": zod.string().optional(),
-  "status": zod.string(),
+  "responseDeadline": zod.coerce.date().optional(),
+  "citationIssuingAgency": zod.string().optional(),
+  "officerName": zod.string().optional(),
+  "officerBadgeNumber": zod.string().optional(),
+  "offenceLocation": zod.string().optional(),
+  "speedAlleged": zod.number().optional(),
+  "speedLimit": zod.number().optional(),
+  "speedUnit": zod.enum(["km/h", "mph"]).optional(),
+  "licencePlate": zod.string().optional(),
+  "licencePlateRegion": zod.string().optional(),
+  "vehicleMake": zod.string().optional(),
+  "vehicleModel": zod.string().optional(),
+  "vehicleYear": zod.number().optional(),
+  "vehicleColour": zod.string().optional(),
+  "vehicleVIN": zod.string().optional(),
+  "driversLicenceNumber": zod.string().optional(),
+  "driversLicenceRegion": zod.string().optional(),
+  "driversLicenceExpiry": zod.coerce.date().optional(),
+  "courtFileNumber": zod.string().optional(),
+  "courtRoomNumber": zod.string().optional(),
+  "courtJurisdiction": zod.string().optional(),
+  "hearingType": zod.string().optional(),
+  "partType": zod.string().optional(),
+  "status": zod.enum(["Open", "Disclosure Requested", "Filed", "Resummoned", "Awaiting Trial", "Withdrawn", "Resolved", "Closed"]),
   "totalFee": zod.number().min(createCaseBodyTotalFeeMin),
+  "retainerAmount": zod.number().optional(),
+  "retainerPaidDate": zod.coerce.date().optional(),
+  "setFine": zod.number().optional(),
+  "victimSurcharge": zod.number().optional(),
+  "disbursements": zod.number().min(0).optional(),
+  "outcome": zod.string().optional(),
+  "reducedCharge": zod.string().optional(),
+  "courtFineAmount": zod.number().optional(),
+  "demeritPoints": zod.number().optional(),
+  "licenceSuspended": zod.boolean().optional(),
+  "suspensionDays": zod.number().optional(),
+  "closedDate": zod.coerce.date().optional(),
   "nextFollowUpDate": zod.coerce.date().optional(),
+  "disclosureRequestedDate": zod.coerce.date().optional(),
+  "disclosureReceivedDate": zod.coerce.date().optional(),
+  "priority": zod.enum(["Low", "Normal", "High", "Urgent"]).optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().optional(),
   "firstNote": zod.string().optional()
 })
 
@@ -163,13 +498,54 @@ export const CreateCaseResponse = zod.object({
   "offenceDescription": zod.string().nullish(),
   "officeCode": zod.string().nullish(),
   "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.string().nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
   "intakeDate": zod.coerce.date(),
   "offenceDate": zod.coerce.date(),
   "status": zod.string(),
   "totalFee": zod.number(),
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "isFullyPaid": zod.boolean(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
   "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -193,13 +569,54 @@ export const GetCaseResponse = zod.object({
   "offenceDescription": zod.string().nullish(),
   "officeCode": zod.string().nullish(),
   "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.string().nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
   "intakeDate": zod.coerce.date(),
   "offenceDate": zod.coerce.date(),
   "status": zod.string(),
   "totalFee": zod.number(),
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "isFullyPaid": zod.boolean(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
   "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }).and(zod.object({
@@ -212,7 +629,8 @@ export const GetCaseResponse = zod.object({
   "courtDates": zod.array(zod.object({
   "id": zod.string(),
   "date": zod.coerce.date(),
-  "outcome": zod.string().nullish()
+  "outcome": zod.string().nullish(),
+  "notes": zod.string().nullish()
 })),
   "payments": zod.array(zod.object({
   "id": zod.string(),
@@ -220,7 +638,16 @@ export const GetCaseResponse = zod.object({
   "amount": zod.number(),
   "date": zod.coerce.date(),
   "method": zod.string().nullish(),
-  "note": zod.string().nullish()
+  "reference": zod.string().nullish(),
+  "allocationType": zod.string(),
+  "receivedBy": zod.string().nullish(),
+  "note": zod.string().nullish(),
+  "isVoided": zod.boolean(),
+  "voidedAt": zod.coerce.date().nullish(),
+  "voidReason": zod.string().nullish(),
+  "isRefund": zod.boolean(),
+  "refundForId": zod.string().nullish(),
+  "createdAt": zod.coerce.date().nullish()
 }))
 }))
 
@@ -239,14 +666,54 @@ export const updateCaseBodyTotalFeeMin = 0;
 export const UpdateCaseBody = zod.object({
   "intakeDate": zod.coerce.date().optional(),
   "offenceDate": zod.coerce.date().optional(),
-  "ticketNumber": zod.string().optional(),
-  "statuteCode": zod.string().optional(),
-  "offenceDescription": zod.string().optional(),
-  "officeCode": zod.string().optional(),
-  "courtLocation": zod.string().optional(),
-  "status": zod.string().optional(),
+  "ticketNumber": zod.string().nullish(),
+  "statuteCode": zod.string().nullish(),
+  "offenceDescription": zod.string().nullish(),
+  "officeCode": zod.string().nullish(),
+  "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.enum(["km/h", "mph"]).nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
+  "status": zod.enum(["Open", "Disclosure Requested", "Filed", "Resummoned", "Awaiting Trial", "Withdrawn", "Resolved", "Closed"]).optional(),
   "totalFee": zod.number().min(updateCaseBodyTotalFeeMin).optional(),
-  "nextFollowUpDate": zod.coerce.date().nullish()
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number().min(0).optional(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
+  "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.enum(["Low", "Normal", "High", "Urgent"]).nullish(),
+  "tags": zod.array(zod.string()).nullish(),
+  "assignedTo": zod.string().nullish()
 })
 
 export const UpdateCaseResponse = zod.object({
@@ -260,13 +727,54 @@ export const UpdateCaseResponse = zod.object({
   "offenceDescription": zod.string().nullish(),
   "officeCode": zod.string().nullish(),
   "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.string().nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
   "intakeDate": zod.coerce.date(),
   "offenceDate": zod.coerce.date(),
   "status": zod.string(),
   "totalFee": zod.number(),
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "isFullyPaid": zod.boolean(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
   "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -297,6 +805,9 @@ export const CreatePaymentBody = zod.object({
   "amount": zod.number().min(createPaymentBodyAmountMin),
   "date": zod.coerce.date(),
   "method": zod.string().optional(),
+  "reference": zod.string().optional(),
+  "allocationType": zod.enum(["Retainer", "Installment", "Final Payment", "Disbursement", "General"]).optional(),
+  "receivedBy": zod.string().optional(),
   "note": zod.string().optional()
 })
 
@@ -306,7 +817,16 @@ export const CreatePaymentResponse = zod.object({
   "amount": zod.number(),
   "date": zod.coerce.date(),
   "method": zod.string().nullish(),
-  "note": zod.string().nullish()
+  "reference": zod.string().nullish(),
+  "allocationType": zod.string(),
+  "receivedBy": zod.string().nullish(),
+  "note": zod.string().nullish(),
+  "isVoided": zod.boolean(),
+  "voidedAt": zod.coerce.date().nullish(),
+  "voidReason": zod.string().nullish(),
+  "isRefund": zod.boolean(),
+  "refundForId": zod.string().nullish(),
+  "createdAt": zod.coerce.date().nullish()
 })
 
 
@@ -321,7 +841,30 @@ export const CreateNoteParams = zod.object({
 
 
 export const CreateNoteBody = zod.object({
-  "text": zod.string().min(1)
+  "text": zod.string().min(1),
+  "author": zod.string().optional()
+})
+
+export const UpdateNoteParams = zod.object({
+  "id": zod.coerce.string(),
+  "noteId": zod.coerce.string()
+})
+
+export const UpdateNoteBody = zod.object({
+  "text": zod.string().min(1).optional(),
+  "author": zod.string().nullish()
+})
+
+export const UpdateNoteResponse = zod.object({
+  "id": zod.string(),
+  "text": zod.string(),
+  "author": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+export const DeleteNoteParams = zod.object({
+  "id": zod.coerce.string(),
+  "noteId": zod.coerce.string()
 })
 
 export const CreateNoteResponse = zod.object({
@@ -330,6 +873,374 @@ export const CreateNoteResponse = zod.object({
   "author": zod.string().nullish(),
   "createdAt": zod.coerce.date()
 })
+
+
+/**
+ * @summary Schedule a court date
+ */
+export const CreateCourtDateParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const CreateCourtDateBody = zod.object({
+  "date": zod.coerce.date(),
+  "outcome": zod.string().optional(),
+  "notes": zod.string().optional()
+})
+
+export const CreateCourtDateResponse = zod.object({
+  "id": zod.string(),
+  "date": zod.coerce.date(),
+  "outcome": zod.string().nullish(),
+  "notes": zod.string().nullish()
+})
+
+
+/**
+ * @summary Remove a court date
+ */
+export const DeleteCourtDateParams = zod.object({
+  "id": zod.coerce.string(),
+  "courtDateId": zod.coerce.string()
+})
+
+export const DeleteCourtDateResponse = zod.void()
+
+
+/**
+ * @summary List documents attached to a case
+ */
+export const ListCaseDocumentsParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const listCaseDocumentsResponseDataItemSizeMin = 0;
+
+
+
+export const ListCaseDocumentsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "name": zod.string(),
+  "type": zod.string().nullish(),
+  "size": zod.number().min(listCaseDocumentsResponseDataItemSizeMin),
+  "uploadedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Attach a document to a case
+ */
+export const CreateDocumentParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+
+export const createDocumentBodySizeMin = 0;
+
+export const createDocumentBodyDataUrlMax = 8000000;
+
+
+
+export const CreateDocumentBody = zod.object({
+  "name": zod.string().min(1),
+  "type": zod.string().optional(),
+  "size": zod.number().min(createDocumentBodySizeMin).optional(),
+  "dataUrl": zod.string().min(1).max(createDocumentBodyDataUrlMax)
+})
+
+export const createDocumentResponseSizeMin = 0;
+
+
+
+export const CreateDocumentResponse = zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "name": zod.string(),
+  "type": zod.string().nullish(),
+  "size": zod.number().min(createDocumentResponseSizeMin),
+  "uploadedAt": zod.coerce.date()
+})
+
+
+/**
+ * Returns document metadata plus the base64 data URL payload.
+ * @summary Download a document
+ */
+export const GetDocumentParams = zod.object({
+  "id": zod.coerce.string(),
+  "documentId": zod.coerce.string()
+})
+
+export const getDocumentResponseOneSizeMin = 0;
+
+
+
+export const GetDocumentResponse = zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "name": zod.string(),
+  "type": zod.string().nullish(),
+  "size": zod.number().min(getDocumentResponseOneSizeMin),
+  "uploadedAt": zod.coerce.date()
+}).and(zod.object({
+  "dataUrl": zod.string()
+}))
+
+
+/**
+ * @summary Remove a document
+ */
+export const DeleteDocumentParams = zod.object({
+  "id": zod.coerce.string(),
+  "documentId": zod.coerce.string()
+})
+
+export const DeleteDocumentResponse = zod.void()
+
+
+/**
+ * @summary List trust ledger entries for a case
+ */
+export const ListTrustEntriesParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ListTrustEntriesResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "type": zod.enum(['deposit', 'withdrawal', 'transfer']),
+  "amount": zod.number(),
+  "date": zod.coerce.date(),
+  "note": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})),
+  "trustBalance": zod.number()
+})
+
+
+/**
+ * @summary Record a trust ledger entry
+ */
+export const CreateTrustEntryParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const createTrustEntryBodyAmountMin = 0.01;
+
+
+
+export const CreateTrustEntryBody = zod.object({
+  "type": zod.enum(['deposit', 'withdrawal', 'transfer']),
+  "amount": zod.number().min(createTrustEntryBodyAmountMin),
+  "date": zod.coerce.date(),
+  "note": zod.string().optional()
+})
+
+export const CreateTrustEntryResponse = zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "type": zod.enum(['deposit', 'withdrawal', 'transfer']),
+  "amount": zod.number(),
+  "date": zod.coerce.date(),
+  "note": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove a trust ledger entry
+ */
+export const DeleteTrustEntryParams = zod.object({
+  "id": zod.coerce.string(),
+  "entryId": zod.coerce.string()
+})
+
+export const DeleteTrustEntryResponse = zod.void()
+
+
+/**
+ * @summary List signature requests for a case
+ */
+export const ListSignatureRequestsParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ListSignatureRequestsResponse = zod.object({
+  "data": zod.array(zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "title": zod.string(),
+  "documentId": zod.string().nullish(),
+  "documentName": zod.string().nullish(),
+  "status": zod.enum(['pending', 'signed']),
+  "token": zod.string(),
+  "signerName": zod.string().nullish(),
+  "signedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Request a signature on a case document or agreement
+ */
+export const CreateSignatureRequestParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const createSignatureRequestBodyTitleMax = 120;
+
+export const createSignatureRequestBodyAgreementTextMax = 20000;
+
+
+
+export const CreateSignatureRequestBody = zod.object({
+  "title": zod.string().min(1).max(createSignatureRequestBodyTitleMax),
+  "documentId": zod.string().optional(),
+  "agreementText": zod.string().max(createSignatureRequestBodyAgreementTextMax).optional()
+})
+
+export const CreateSignatureRequestResponse = zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "title": zod.string(),
+  "documentId": zod.string().nullish(),
+  "documentName": zod.string().nullish(),
+  "status": zod.enum(['pending', 'signed']),
+  "token": zod.string(),
+  "signerName": zod.string().nullish(),
+  "signedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove a signature request
+ */
+export const DeleteSignatureRequestParams = zod.object({
+  "id": zod.coerce.string(),
+  "requestId": zod.coerce.string()
+})
+
+export const DeleteSignatureRequestResponse = zod.void()
+
+
+/**
+ * Public endpoint — the token authorizes access.
+ * @summary Get a client's portal view
+ */
+export const GetPortalViewParams = zod.object({
+  "token": zod.coerce.string()
+})
+
+export const getPortalViewResponseCasesItemDocumentsItemSizeMin = 0;
+
+
+
+export const GetPortalViewResponse = zod.object({
+  "clientName": zod.string(),
+  "cases": zod.array(zod.object({
+  "id": zod.string(),
+  "caseNumber": zod.number(),
+  "status": zod.string(),
+  "ticketNumber": zod.string().nullish(),
+  "offenceDescription": zod.string().nullish(),
+  "offenceDate": zod.coerce.date(),
+  "totalFee": zod.number(),
+  "amountReceived": zod.number(),
+  "balanceOwing": zod.number(),
+  "courtDates": zod.array(zod.object({
+  "date": zod.coerce.date(),
+  "outcome": zod.string().nullish()
+})),
+  "payments": zod.array(zod.object({
+  "amount": zod.number(),
+  "date": zod.coerce.date(),
+  "method": zod.string().nullish(),
+  "note": zod.string().nullish()
+})),
+  "documents": zod.array(zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "name": zod.string(),
+  "type": zod.string().nullish(),
+  "size": zod.number().min(getPortalViewResponseCasesItemDocumentsItemSizeMin),
+  "uploadedAt": zod.coerce.date()
+}))
+}))
+})
+
+
+/**
+ * Public endpoint — the token authorizes access.
+ * @summary Download a document via the portal
+ */
+export const DownloadPortalDocumentParams = zod.object({
+  "token": zod.coerce.string(),
+  "documentId": zod.coerce.string()
+})
+
+export const downloadPortalDocumentResponseOneSizeMin = 0;
+
+
+
+export const DownloadPortalDocumentResponse = zod.object({
+  "id": zod.string(),
+  "caseId": zod.string(),
+  "name": zod.string(),
+  "type": zod.string().nullish(),
+  "size": zod.number().min(downloadPortalDocumentResponseOneSizeMin),
+  "uploadedAt": zod.coerce.date()
+}).and(zod.object({
+  "dataUrl": zod.string()
+}))
+
+
+/**
+ * Public endpoint — the token authorizes access.
+ * @summary Get a signature request for signing
+ */
+export const GetSignatureRequestParams = zod.object({
+  "token": zod.coerce.string()
+})
+
+export const GetSignatureRequestResponse = zod.object({
+  "title": zod.string(),
+  "agreementText": zod.string().nullish(),
+  "documentName": zod.string().nullish(),
+  "status": zod.enum(['pending', 'signed']),
+  "caseNumber": zod.number(),
+  "clientName": zod.string(),
+  "signerName": zod.string().nullish(),
+  "signedAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * Public endpoint — the token authorizes access.
+ * @summary Sign a signature request
+ */
+export const SignSignatureRequestParams = zod.object({
+  "token": zod.coerce.string()
+})
+
+export const signSignatureRequestBodySignerNameMax = 120;
+
+export const signSignatureRequestBodySignatureDataMax = 2000000;
+
+
+
+export const SignSignatureRequestBody = zod.object({
+  "signerName": zod.string().min(1).max(signSignatureRequestBodySignerNameMax),
+  "signatureData": zod.string().min(1).max(signSignatureRequestBodySignatureDataMax).describe('Data URL of the signature image')
+})
+
+export const SignSignatureRequestResponse = zod.void()
 
 
 /**
@@ -359,13 +1270,54 @@ export const GetReportsSummaryResponse = zod.object({
   "offenceDescription": zod.string().nullish(),
   "officeCode": zod.string().nullish(),
   "courtLocation": zod.string().nullish(),
+  "responseDeadline": zod.coerce.date().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
+  "officerBadgeNumber": zod.string().nullish(),
+  "offenceLocation": zod.string().nullish(),
+  "speedAlleged": zod.number().nullish(),
+  "speedLimit": zod.number().nullish(),
+  "speedUnit": zod.string().nullish(),
+  "licencePlate": zod.string().nullish(),
+  "licencePlateRegion": zod.string().nullish(),
+  "vehicleMake": zod.string().nullish(),
+  "vehicleModel": zod.string().nullish(),
+  "vehicleYear": zod.number().nullish(),
+  "vehicleColour": zod.string().nullish(),
+  "vehicleVIN": zod.string().nullish(),
+  "driversLicenceNumber": zod.string().nullish(),
+  "driversLicenceRegion": zod.string().nullish(),
+  "driversLicenceExpiry": zod.coerce.date().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtJurisdiction": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "partType": zod.string().nullish(),
   "intakeDate": zod.coerce.date(),
   "offenceDate": zod.coerce.date(),
   "status": zod.string(),
   "totalFee": zod.number(),
+  "retainerAmount": zod.number().nullish(),
+  "retainerPaidDate": zod.coerce.date().nullish(),
+  "setFine": zod.number().nullish(),
+  "victimSurcharge": zod.number().nullish(),
+  "disbursements": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "isFullyPaid": zod.boolean(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
+  "closedDate": zod.coerce.date().nullish(),
   "nextFollowUpDate": zod.coerce.date().nullish(),
+  "disclosureRequestedDate": zod.coerce.date().nullish(),
+  "disclosureReceivedDate": zod.coerce.date().nullish(),
+  "priority": zod.string().optional(),
+  "tags": zod.array(zod.string()).optional(),
+  "assignedTo": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 }))
@@ -406,3 +1358,327 @@ export const CommitImportResponse = zod.object({
 })
 
 
+
+
+// ─── Invoicing ───────────────────────────────────────────────────────────────
+
+const InvoiceItemZod = zod.object({
+  "id": zod.string(),
+  "description": zod.string(),
+  "quantity": zod.number(),
+  "unitPrice": zod.number(),
+  "amount": zod.number(),
+});
+
+const InvoiceZod = zod.object({
+  "id": zod.string(),
+  "invoiceNumber": zod.number(),
+  "clientId": zod.string(),
+  "clientName": zod.string(),
+  "caseId": zod.string().nullish(),
+  "caseNumber": zod.number().nullish(),
+  "status": zod.enum(["draft", "sent", "paid", "void"]),
+  "issueDate": zod.string(),
+  "dueDate": zod.string(),
+  "items": zod.array(InvoiceItemZod),
+  "subtotal": zod.number(),
+  "taxRate": zod.number(),
+  "taxAmount": zod.number(),
+  "total": zod.number(),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+});
+
+export const ListInvoicesQueryParams = zod.object({
+  "clientId": zod.string().optional(),
+  "caseId": zod.string().optional(),
+  "status": zod.enum(["draft", "sent", "paid", "void"]).optional(),
+  "page": zod.coerce.number().optional(),
+  "limit": zod.coerce.number().optional(),
+});
+
+export const ListInvoicesResponse = zod.object({
+  "data": zod.array(InvoiceZod),
+  "total": zod.number(),
+  "page": zod.number(),
+  "pageSize": zod.number(),
+});
+
+export const CreateInvoiceBody = zod.object({
+  "clientId": zod.string().min(1),
+  "caseId": zod.string().optional(),
+  "issueDate": zod.string().min(1),
+  "dueDate": zod.string().min(1),
+  "items": zod.array(zod.object({
+    "description": zod.string().min(1),
+    "quantity": zod.number().min(0.01),
+    "unitPrice": zod.number().min(0),
+  })).min(1),
+  "taxRate": zod.number().min(0).max(100).optional().default(0),
+  "notes": zod.string().optional(),
+});
+
+export const CreateInvoiceResponse = InvoiceZod;
+
+export const GetInvoiceParams = zod.object({
+  "id": zod.string(),
+});
+
+export const GetInvoiceResponse = InvoiceZod;
+
+export const UpdateInvoiceStatusParams = zod.object({
+  "id": zod.string(),
+});
+
+export const UpdateInvoiceStatusBody = zod.object({
+  "status": zod.enum(["draft", "sent", "paid", "void"]),
+});
+
+export const UpdateInvoiceStatusResponse = InvoiceZod;
+
+export const DeleteInvoiceParams = zod.object({
+  "id": zod.string(),
+});
+
+
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+
+export const EXPENSE_CATEGORIES = [
+  "Filing Fees",
+  "Court Fees",
+  "Travel",
+  "Parking",
+  "Postage & Courier",
+  "Printing & Copying",
+  "Phone & Communication",
+  "Office Supplies",
+  "Professional Fees",
+  "Expert Witness",
+  "Process Server",
+  "Transcripts",
+  "Software & Subscriptions",
+  "Marketing",
+  "Other",
+] as const;
+
+const ExpenseZod = zod.object({
+  "id":          zod.string(),
+  "tenantId":    zod.string(),
+  "caseId":      zod.string().nullish(),
+  "caseNumber":  zod.number().nullish(),
+  "clientId":    zod.string().nullish(),
+  "clientName":  zod.string().nullish(),
+  "category":    zod.string(),
+  "amount":      zod.number(),
+  "date":        zod.string(),
+  "description": zod.string(),
+  "vendor":      zod.string().nullish(),
+  "receiptUrl":  zod.string().nullish(),
+  "isBillable":  zod.boolean(),
+  "isBilled":    zod.boolean(),
+  "createdAt":   zod.coerce.date(),
+  "updatedAt":   zod.coerce.date(),
+});
+
+export const ListExpensesQueryParams = zod.object({
+  "caseId":      zod.string().optional(),
+  "clientId":    zod.string().optional(),
+  "category":    zod.string().optional(),
+  "firmOnly":    zod.coerce.boolean().optional(),   // true = no caseId
+  "billable":    zod.coerce.boolean().optional(),
+  "billed":      zod.coerce.boolean().optional(),
+  "dateFrom":    zod.string().optional(),
+  "dateTo":      zod.string().optional(),
+  "search":      zod.string().optional(),
+  "page":        zod.coerce.number().optional(),
+  "limit":       zod.coerce.number().optional(),
+});
+
+export const ListExpensesResponse = zod.object({
+  "data":        zod.array(ExpenseZod),
+  "total":       zod.number(),
+  "totalAmount": zod.number(),
+  "page":        zod.number(),
+  "pageSize":    zod.number(),
+});
+
+export const CreateExpenseBody = zod.object({
+  "caseId":      zod.string().optional(),
+  "category":    zod.string().min(1),
+  "amount":      zod.number().positive(),
+  "date":        zod.string().min(1),
+  "description": zod.string().min(1),
+  "vendor":      zod.string().optional(),
+  "receiptUrl":  zod.string().url().optional().or(zod.literal("")),
+  "isBillable":  zod.boolean().optional().default(false),
+});
+
+export const CreateExpenseResponse = ExpenseZod;
+
+export const UpdateExpenseParams = zod.object({ "id": zod.string() });
+
+export const UpdateExpenseBody = zod.object({
+  "caseId":      zod.string().nullish(),
+  "category":    zod.string().min(1).optional(),
+  "amount":      zod.number().positive().optional(),
+  "date":        zod.string().min(1).optional(),
+  "description": zod.string().min(1).optional(),
+  "vendor":      zod.string().nullish(),
+  "receiptUrl":  zod.string().url().optional().or(zod.literal("")).nullish(),
+  "isBillable":  zod.boolean().optional(),
+  "isBilled":    zod.boolean().optional(),
+});
+
+export const UpdateExpenseResponse = ExpenseZod;
+
+export const GetExpenseParams    = zod.object({ "id": zod.string() });
+export const GetExpenseResponse  = ExpenseZod;
+export const DeleteExpenseParams = zod.object({ "id": zod.string() });
+
+// Summary
+export const GetExpenseSummaryQueryParams = zod.object({
+  "dateFrom": zod.string().optional(),
+  "dateTo":   zod.string().optional(),
+  "caseId":   zod.string().optional(),
+});
+
+export const GetExpenseSummaryResponse = zod.object({
+  "totalAmount":     zod.number(),
+  "billableAmount":  zod.number(),
+  "billedAmount":    zod.number(),
+  "unbilledAmount":  zod.number(),
+  "firmAmount":      zod.number(),
+  "caseAmount":      zod.number(),
+  "count":           zod.number(),
+  "byCategory": zod.array(zod.object({
+    "category": zod.string(),
+    "amount":   zod.number(),
+    "count":    zod.number(),
+  })),
+  "byMonth": zod.array(zod.object({
+    "month":  zod.string(),
+    "amount": zod.number(),
+    "count":  zod.number(),
+  })),
+  "topVendors": zod.array(zod.object({
+    "vendor": zod.string(),
+    "amount": zod.number(),
+    "count":  zod.number(),
+  })),
+});
+
+
+// ─── Appointments ─────────────────────────────────────────────────────────────
+
+export const APPOINTMENT_TYPES = [
+  "Consultation",
+  "Court Appearance",
+  "Client Meeting",
+  "Phone Call",
+  "Video Call",
+  "Document Review",
+  "Mediation",
+  "Deposition",
+  "Site Visit",
+  "Other",
+] as const;
+
+export const APPOINTMENT_STATUSES = [
+  "scheduled",
+  "confirmed",
+  "completed",
+  "cancelled",
+  "no_show",
+] as const;
+
+const AppointmentZod = zod.object({
+  "id":           zod.string(),
+  "tenantId":     zod.string(),
+  "clientId":     zod.string().nullish(),
+  "clientName":   zod.string().nullish(),
+  "caseId":       zod.string().nullish(),
+  "caseNumber":   zod.number().nullish(),
+  "title":        zod.string(),
+  "type":         zod.string(),
+  "startAt":      zod.coerce.date(),
+  "endAt":        zod.coerce.date(),
+  "location":     zod.string().nullish(),
+  "notes":        zod.string().nullish(),
+  "status":       zod.enum(["scheduled","confirmed","completed","cancelled","no_show"]),
+  "reminderSent": zod.boolean(),
+  "createdAt":    zod.coerce.date(),
+  "updatedAt":    zod.coerce.date(),
+});
+
+export const ListAppointmentsQueryParams = zod.object({
+  "clientId":  zod.string().optional(),
+  "caseId":    zod.string().optional(),
+  "type":      zod.string().optional(),
+  "status":    zod.string().optional(),
+  "dateFrom":  zod.string().optional(),  // ISO date YYYY-MM-DD
+  "dateTo":    zod.string().optional(),
+  "upcoming":  zod.coerce.boolean().optional(),
+  "page":      zod.coerce.number().optional(),
+  "limit":     zod.coerce.number().optional(),
+});
+
+export const ListAppointmentsResponse = zod.object({
+  "data":     zod.array(AppointmentZod),
+  "total":    zod.number(),
+  "page":     zod.number(),
+  "pageSize": zod.number(),
+});
+
+export const CreateAppointmentBody = zod.object({
+  "clientId":  zod.string().optional(),
+  "caseId":    zod.string().optional(),
+  "title":     zod.string().min(1),
+  "type":      zod.string().min(1),
+  "startAt":   zod.string().min(1),  // ISO datetime
+  "endAt":     zod.string().min(1),
+  "location":  zod.string().optional(),
+  "notes":     zod.string().optional(),
+  "status":    zod.enum(["scheduled","confirmed","completed","cancelled","no_show"]).optional().default("scheduled"),
+});
+
+export const CreateAppointmentResponse = AppointmentZod;
+
+export const UpdateAppointmentParams = zod.object({ "id": zod.string() });
+
+export const UpdateAppointmentBody = zod.object({
+  "clientId":  zod.string().nullish(),
+  "caseId":    zod.string().nullish(),
+  "title":     zod.string().min(1).optional(),
+  "type":      zod.string().min(1).optional(),
+  "startAt":   zod.string().optional(),
+  "endAt":     zod.string().optional(),
+  "location":  zod.string().nullish(),
+  "notes":     zod.string().nullish(),
+  "status":    zod.enum(["scheduled","confirmed","completed","cancelled","no_show"]).optional(),
+});
+
+export const UpdateAppointmentResponse = AppointmentZod;
+export const GetAppointmentParams     = zod.object({ "id": zod.string() });
+export const GetAppointmentResponse   = AppointmentZod;
+export const DeleteAppointmentParams  = zod.object({ "id": zod.string() });
+
+// Calendar feed (grouped by date)
+export const GetCalendarAppointmentsQueryParams = zod.object({
+  "year":  zod.coerce.number(),
+  "month": zod.coerce.number(), // 1-12
+});
+
+export const GetCalendarAppointmentsResponse = zod.array(AppointmentZod);
+
+// Conflict check
+export const CheckConflictQueryParams = zod.object({
+  "startAt":    zod.string(),
+  "endAt":      zod.string(),
+  "excludeId":  zod.string().optional(),
+});
+
+export const CheckConflictResponse = zod.object({
+  "hasConflict": zod.boolean(),
+  "conflicts":   zod.array(AppointmentZod),
+});

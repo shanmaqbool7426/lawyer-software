@@ -9,14 +9,99 @@
 export interface CaseUpdate {
   intakeDate?: Date;
   offenceDate?: Date;
-  ticketNumber?: string;
-  statuteCode?: string;
-  offenceDescription?: string;
-  officeCode?: string;
-  courtLocation?: string;
-  status?: string;
+  /** @nullable */
+  ticketNumber?: string | null;
+  /** @nullable */
+  statuteCode?: string | null;
+  /** @nullable */
+  offenceDescription?: string | null;
+  /** @nullable */
+  officeCode?: string | null;
+  /** @nullable */
+  courtLocation?: string | null;
+  /** @nullable */
+  responseDeadline?: Date | null;
+  /** @nullable */
+  citationIssuingAgency?: string | null;
+  /** @nullable */
+  officerName?: string | null;
+  /** @nullable */
+  officerBadgeNumber?: string | null;
+  /** @nullable */
+  offenceLocation?: string | null;
+  /** @nullable */
+  speedAlleged?: number | null;
+  /** @nullable */
+  speedLimit?: number | null;
+  /** @nullable */
+  speedUnit?: 'km/h' | 'mph' | null;
+  /** @nullable */
+  licencePlate?: string | null;
+  /** @nullable */
+  licencePlateRegion?: string | null;
+  /** @nullable */
+  vehicleMake?: string | null;
+  /** @nullable */
+  vehicleModel?: string | null;
+  /** @nullable */
+  vehicleYear?: number | null;
+  /** @nullable */
+  vehicleColour?: string | null;
+  /** @nullable */
+  vehicleVIN?: string | null;
+  /** @nullable */
+  driversLicenceNumber?: string | null;
+  /** @nullable */
+  driversLicenceRegion?: string | null;
+  /** @nullable */
+  driversLicenceExpiry?: Date | null;
+  /** @nullable */
+  courtFileNumber?: string | null;
+  /** @nullable */
+  courtRoomNumber?: string | null;
+  /** @nullable */
+  courtJurisdiction?: string | null;
+  /** @nullable */
+  hearingType?: string | null;
+  /** @nullable */
+  partType?: string | null;
+  status?: 'Open' | 'Disclosure Requested' | 'Filed' | 'Resummoned' | 'Awaiting Trial' | 'Withdrawn' | 'Resolved' | 'Closed';
   /** @minimum 0 */
   totalFee?: number;
   /** @nullable */
+  retainerAmount?: number | null;
+  /** @nullable */
+  retainerPaidDate?: Date | null;
+  /** @nullable */
+  setFine?: number | null;
+  /** @nullable */
+  victimSurcharge?: number | null;
+  /** @minimum 0 */
+  disbursements?: number;
+  /** @nullable */
+  outcome?: string | null;
+  /** @nullable */
+  reducedCharge?: string | null;
+  /** @nullable */
+  courtFineAmount?: number | null;
+  /** @nullable */
+  demeritPoints?: number | null;
+  /** @nullable */
+  licenceSuspended?: boolean | null;
+  /** @nullable */
+  suspensionDays?: number | null;
+  /** @nullable */
+  closedDate?: Date | null;
+  /** @nullable */
   nextFollowUpDate?: Date | null;
+  /** @nullable */
+  disclosureRequestedDate?: Date | null;
+  /** @nullable */
+  disclosureReceivedDate?: Date | null;
+  /** @nullable */
+  priority?: 'Low' | 'Normal' | 'High' | 'Urgent' | null;
+  /** @nullable */
+  tags?: string[] | null;
+  /** @nullable */
+  assignedTo?: string | null;
 }

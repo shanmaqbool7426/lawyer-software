@@ -3,9 +3,10 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
+
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const rawPort = process.env.PORT;
+const rawPort = process.env.PORT ?? (process.env.NODE_ENV === 'production' ? '3000' : undefined);
 
 if (!rawPort) {
   throw new Error(
@@ -69,6 +70,12 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:9080',
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
     },

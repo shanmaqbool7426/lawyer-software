@@ -16,5 +16,10 @@ export interface Client {
   leadSourceChannel: string;
   /** @nullable */
   leadSourceDetail?: string | null;
+  /**
+     * Active client-portal token, or null when no link is issued.
+     * @nullable
+     */
+  portalToken: string | null;
   createdAt: Date;
 }

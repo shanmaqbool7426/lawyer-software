@@ -14,5 +14,20 @@ export interface Payment {
   /** @nullable */
   method?: string | null;
   /** @nullable */
+  reference?: string | null;
+  allocationType: string;
+  /** @nullable */
+  receivedBy?: string | null;
+  /** @nullable */
   note?: string | null;
+  isVoided: boolean;
+  /** @nullable */
+  voidedAt?: Date | null;
+  /** @nullable */
+  voidReason?: string | null;
+  isRefund: boolean;
+  /** @nullable */
+  refundForId?: string | null;
+  /** @nullable */
+  createdAt?: Date | null;
 }

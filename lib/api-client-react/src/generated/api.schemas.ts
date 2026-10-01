@@ -19,6 +19,11 @@ export interface Client {
   leadSourceChannel: string;
   /** @nullable */
   leadSourceDetail?: string | null;
+  /**
+     * Active client-portal token, or null when no link is issued.
+     * @nullable
+     */
+  portalToken: string | null;
   createdAt: string;
 }
 
@@ -29,6 +34,16 @@ export interface ClientInput {
   email?: string;
   /** @minLength 1 */
   leadSourceChannel: string;
+  leadSourceDetail?: string;
+}
+
+export interface ClientUpdate {
+  /** @minLength 1 */
+  fullName?: string;
+  phone?: string;
+  email?: string;
+  /** @minLength 1 */
+  leadSourceChannel?: string;
   leadSourceDetail?: string;
 }
 
@@ -49,14 +64,92 @@ export interface Case {
   officeCode?: string | null;
   /** @nullable */
   courtLocation?: string | null;
+  /** @nullable */
+  responseDeadline?: string | null;
+  /** @nullable */
+  citationIssuingAgency?: string | null;
+  /** @nullable */
+  officerName?: string | null;
+  /** @nullable */
+  officerBadgeNumber?: string | null;
+  /** @nullable */
+  offenceLocation?: string | null;
+  /** @nullable */
+  speedAlleged?: number | null;
+  /** @nullable */
+  speedLimit?: number | null;
+  /** @nullable */
+  speedUnit?: string | null;
+  /** @nullable */
+  licencePlate?: string | null;
+  /** @nullable */
+  licencePlateRegion?: string | null;
+  /** @nullable */
+  vehicleMake?: string | null;
+  /** @nullable */
+  vehicleModel?: string | null;
+  /** @nullable */
+  vehicleYear?: number | null;
+  /** @nullable */
+  vehicleColour?: string | null;
+  /** @nullable */
+  vehicleVIN?: string | null;
+  /** @nullable */
+  driversLicenceNumber?: string | null;
+  /** @nullable */
+  driversLicenceRegion?: string | null;
+  /** @nullable */
+  driversLicenceExpiry?: string | null;
+  /** @nullable */
+  courtFileNumber?: string | null;
+  /** @nullable */
+  courtRoomNumber?: string | null;
+  /** @nullable */
+  courtJurisdiction?: string | null;
+  /** @nullable */
+  hearingType?: string | null;
+  /** @nullable */
+  partType?: string | null;
   intakeDate: string;
   offenceDate: string;
   status: string;
   totalFee: number;
+  /** @nullable */
+  retainerAmount?: number | null;
+  /** @nullable */
+  retainerPaidDate?: string | null;
+  /** @nullable */
+  setFine?: number | null;
+  /** @nullable */
+  victimSurcharge?: number | null;
+  disbursements: number;
   amountReceived: number;
   balanceOwing: number;
+  isFullyPaid: boolean;
+  /** @nullable */
+  outcome?: string | null;
+  /** @nullable */
+  reducedCharge?: string | null;
+  /** @nullable */
+  courtFineAmount?: number | null;
+  /** @nullable */
+  demeritPoints?: number | null;
+  /** @nullable */
+  licenceSuspended?: boolean | null;
+  /** @nullable */
+  suspensionDays?: number | null;
+  /** @nullable */
+  closedDate?: string | null;
   /** @nullable */
   nextFollowUpDate?: string | null;
+  /** @nullable */
+  disclosureRequestedDate?: string | null;
+  /** @nullable */
+  disclosureReceivedDate?: string | null;
+  priority?: string;
+  tags?: string[];
+  /** @nullable */
+  assignedTo?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,10 +163,50 @@ export interface CaseInput {
   offenceDescription?: string;
   officeCode?: string;
   courtLocation?: string;
+  responseDeadline?: string;
+  citationIssuingAgency?: string;
+  officerName?: string;
+  officerBadgeNumber?: string;
+  offenceLocation?: string;
+  speedAlleged?: number;
+  speedLimit?: number;
+  speedUnit?: 'km/h' | 'mph';
+  licencePlate?: string;
+  licencePlateRegion?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleYear?: number;
+  vehicleColour?: string;
+  vehicleVIN?: string;
+  driversLicenceNumber?: string;
+  driversLicenceRegion?: string;
+  driversLicenceExpiry?: string;
+  courtFileNumber?: string;
+  courtRoomNumber?: string;
+  courtJurisdiction?: string;
+  hearingType?: string;
+  partType?: string;
   status: string;
   /** @minimum 0 */
   totalFee: number;
+  retainerAmount?: number;
+  retainerPaidDate?: string;
+  setFine?: number;
+  victimSurcharge?: number;
+  disbursements?: number;
+  outcome?: string;
+  reducedCharge?: string;
+  courtFineAmount?: number;
+  demeritPoints?: number;
+  licenceSuspended?: boolean;
+  suspensionDays?: number;
+  closedDate?: string;
   nextFollowUpDate?: string;
+  disclosureRequestedDate?: string;
+  disclosureReceivedDate?: string;
+  priority?: 'Low' | 'Normal' | 'High' | 'Urgent';
+  tags?: string[];
+  assignedTo?: string;
   firstNote?: string;
 }
 
@@ -85,11 +218,51 @@ export interface CaseUpdate {
   offenceDescription?: string;
   officeCode?: string;
   courtLocation?: string;
+  responseDeadline?: string | null;
+  citationIssuingAgency?: string | null;
+  officerName?: string | null;
+  officerBadgeNumber?: string | null;
+  offenceLocation?: string | null;
+  speedAlleged?: number | null;
+  speedLimit?: number | null;
+  speedUnit?: string | null;
+  licencePlate?: string | null;
+  licencePlateRegion?: string | null;
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
+  vehicleYear?: number | null;
+  vehicleColour?: string | null;
+  vehicleVIN?: string | null;
+  driversLicenceNumber?: string | null;
+  driversLicenceRegion?: string | null;
+  driversLicenceExpiry?: string | null;
+  courtFileNumber?: string | null;
+  courtRoomNumber?: string | null;
+  courtJurisdiction?: string | null;
+  hearingType?: string | null;
+  partType?: string | null;
   status?: string;
   /** @minimum 0 */
   totalFee?: number;
+  retainerAmount?: number | null;
+  retainerPaidDate?: string | null;
+  setFine?: number | null;
+  victimSurcharge?: number | null;
+  disbursements?: number | null;
+  outcome?: string | null;
+  reducedCharge?: string | null;
+  courtFineAmount?: number | null;
+  demeritPoints?: number | null;
+  licenceSuspended?: boolean | null;
+  suspensionDays?: number | null;
+  closedDate?: string | null;
   /** @nullable */
   nextFollowUpDate?: string | null;
+  disclosureRequestedDate?: string | null;
+  disclosureReceivedDate?: string | null;
+  priority?: string | null;
+  tags?: string[] | null;
+  assignedTo?: string | null;
 }
 
 export interface Payment {
@@ -100,7 +273,22 @@ export interface Payment {
   /** @nullable */
   method?: string | null;
   /** @nullable */
+  reference?: string | null;
+  allocationType: string;
+  /** @nullable */
+  receivedBy?: string | null;
+  /** @nullable */
   note?: string | null;
+  isVoided: boolean;
+  /** @nullable */
+  voidedAt?: string | null;
+  /** @nullable */
+  voidReason?: string | null;
+  isRefund: boolean;
+  /** @nullable */
+  refundForId?: string | null;
+  /** @nullable */
+  createdAt?: string | null;
 }
 
 export interface PaymentInput {
@@ -108,6 +296,9 @@ export interface PaymentInput {
   amount: number;
   date: string;
   method?: string;
+  reference?: string;
+  allocationType?: 'Retainer' | 'Installment' | 'Final Payment' | 'Disbursement' | 'General';
+  receivedBy?: string;
   note?: string;
 }
 
@@ -122,6 +313,7 @@ export interface Note {
 export interface NoteInput {
   /** @minLength 1 */
   text: string;
+  author?: string;
 }
 
 export interface CourtDate {
@@ -129,6 +321,46 @@ export interface CourtDate {
   date: string;
   /** @nullable */
   outcome?: string | null;
+  /** @nullable */
+  notes?: string | null;
+}
+
+export interface CourtDateInput {
+  date: string;
+  outcome?: string;
+  notes?: string;
+}
+
+export interface DocumentSummary {
+  id: string;
+  caseId: string;
+  name: string;
+  /** @nullable */
+  type?: string | null;
+  /** @minimum 0 */
+  size: number;
+  uploadedAt: string;
+}
+
+export interface DocumentInput {
+  /** @minLength 1 */
+  name: string;
+  type?: string;
+  /** @minimum 0 */
+  size?: number;
+  /**
+     * @minLength 1
+     * @maxLength 8000000
+     */
+  dataUrl: string;
+}
+
+export type DocumentContent = DocumentSummary & {
+  dataUrl: string;
+};
+
+export interface DocumentList {
+  data: DocumentSummary[];
 }
 
 export type CaseDetail = Case & {
@@ -139,12 +371,26 @@ export type CaseDetail = Case & {
 
 export type DashboardStatusCounts = {[key: string]: number};
 
+export interface DashboardCourtDate {
+  caseId: string;
+  caseNumber: number;
+  clientName: string;
+  date: string;
+  /** @nullable */
+  outcome?: string | null;
+}
+
 export interface Dashboard {
   activeCases: number;
+  closedCases: number;
   outstandingBalance: number;
   dueFollowUps: number;
   attentionCases: Case[];
   statusCounts: DashboardStatusCounts;
+  totalFees: number;
+  totalCollected: number;
+  recentPayments: Payment[];
+  courtDates: DashboardCourtDate[];
 }
 
 export interface ReportCount {
@@ -157,6 +403,20 @@ export interface ReportsSummary {
   referralBreakdown: ReportCount[];
   statusCounts: ReportCount[];
   outstandingCases: Case[];
+}
+
+export interface PaginatedCases {
+  data: Case[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PaginatedClients {
+  data: Client[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export type ImportInputRowsItem = {[key: string]: string};
@@ -180,8 +440,235 @@ export interface ImportResult {
   skipped: number;
 }
 
+export interface Workspace {
+  id: string;
+  name: string;
+  /** @nullable */
+  calendarToken?: string | null;
+  createdAt: string;
+}
+
+export interface WorkspaceInput {
+  /**
+     * @minLength 1
+     * @maxLength 80
+     */
+  name: string;
+  /** Clerk organization ID to link when Clerk is enabled */
+  externalId?: string;
+}
+
+export interface WorkspaceList {
+  data: Workspace[];
+  /** @nullable */
+  defaultWorkspaceId: string | null;
+}
+
+export type NotificationItemKind = typeof NotificationItemKind[keyof typeof NotificationItemKind];
+
+
+export const NotificationItemKind = {
+  'court-date': 'court-date',
+  'follow-up': 'follow-up',
+  outstanding: 'outstanding',
+  signature: 'signature',
+} as const;
+
+export interface NotificationItem {
+  kind: NotificationItemKind;
+  caseId: string;
+  caseNumber: number;
+  clientName: string;
+  title: string;
+  /** @nullable */
+  detail?: string | null;
+  /** @nullable */
+  date: string | null;
+  days: number;
+}
+
+export interface Notifications {
+  items: NotificationItem[];
+  total: number;
+}
+
+export interface CalendarFeed {
+  token: string;
+  url: string;
+}
+
+export interface PortalLink {
+  token: string;
+}
+
+export interface PortalCourtDate {
+  date: string;
+  /** @nullable */
+  outcome?: string | null;
+}
+
+export interface PortalPayment {
+  amount: number;
+  date: string;
+  /** @nullable */
+  method?: string | null;
+  /** @nullable */
+  note?: string | null;
+}
+
+export interface PortalCase {
+  id: string;
+  caseNumber: number;
+  status: string;
+  /** @nullable */
+  ticketNumber?: string | null;
+  /** @nullable */
+  offenceDescription?: string | null;
+  offenceDate: string;
+  totalFee: number;
+  amountReceived: number;
+  balanceOwing: number;
+  courtDates: PortalCourtDate[];
+  payments: PortalPayment[];
+  documents: DocumentSummary[];
+}
+
+export interface PortalView {
+  clientName: string;
+  cases: PortalCase[];
+}
+
+export type TrustEntryType = typeof TrustEntryType[keyof typeof TrustEntryType];
+
+
+export const TrustEntryType = {
+  deposit: 'deposit',
+  withdrawal: 'withdrawal',
+  transfer: 'transfer',
+} as const;
+
+export interface TrustEntry {
+  id: string;
+  caseId: string;
+  type: TrustEntryType;
+  amount: number;
+  date: string;
+  /** @nullable */
+  note?: string | null;
+  createdAt: string;
+}
+
+export type TrustEntryInputType = typeof TrustEntryInputType[keyof typeof TrustEntryInputType];
+
+
+export const TrustEntryInputType = {
+  deposit: 'deposit',
+  withdrawal: 'withdrawal',
+  transfer: 'transfer',
+} as const;
+
+export interface TrustEntryInput {
+  type: TrustEntryInputType;
+  /** @minimum 0.01 */
+  amount: number;
+  date: string;
+  note?: string;
+}
+
+export interface TrustLedger {
+  data: TrustEntry[];
+  trustBalance: number;
+}
+
+export type SignatureRequestSummaryStatus = typeof SignatureRequestSummaryStatus[keyof typeof SignatureRequestSummaryStatus];
+
+
+export const SignatureRequestSummaryStatus = {
+  pending: 'pending',
+  signed: 'signed',
+} as const;
+
+export interface SignatureRequestSummary {
+  id: string;
+  caseId: string;
+  title: string;
+  /** @nullable */
+  documentId?: string | null;
+  /** @nullable */
+  documentName?: string | null;
+  status: SignatureRequestSummaryStatus;
+  token: string;
+  /** @nullable */
+  signerName?: string | null;
+  /** @nullable */
+  signedAt?: string | null;
+  createdAt: string;
+}
+
+export interface SignatureRequestInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  title: string;
+  documentId?: string;
+  /** @maxLength 20000 */
+  agreementText?: string;
+}
+
+export interface SignatureRequestList {
+  data: SignatureRequestSummary[];
+}
+
+export type SignatureRequestViewStatus = typeof SignatureRequestViewStatus[keyof typeof SignatureRequestViewStatus];
+
+
+export const SignatureRequestViewStatus = {
+  pending: 'pending',
+  signed: 'signed',
+} as const;
+
+export interface SignatureRequestView {
+  title: string;
+  /** @nullable */
+  agreementText?: string | null;
+  /** @nullable */
+  documentName?: string | null;
+  status: SignatureRequestViewStatus;
+  caseNumber: number;
+  clientName: string;
+  /** @nullable */
+  signerName?: string | null;
+  /** @nullable */
+  signedAt?: string | null;
+  createdAt: string;
+}
+
+export interface SignaturePayload {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  signerName: string;
+  /**
+     * Data URL of the signature image
+     * @minLength 1
+     * @maxLength 2000000
+     */
+  signatureData: string;
+}
+
 export type ListClientsParams = {
 search?: string;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
 };
 
 export type ListCasesParams = {
@@ -189,7 +676,380 @@ search?: string;
 status?: string;
 source?: string;
 outstanding?: boolean;
+clientId?: string;
 dateFrom?: string;
 dateTo?: string;
+/**
+ * @minimum 1
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
 };
 
+
+
+// ─── Invoice types ────────────────────────────────────────────────────────────
+
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void';
+
+export interface InvoiceItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: number;
+  clientId: string;
+  clientName: string;
+  caseId?: string | null;
+  caseNumber?: number | null;
+  status: InvoiceStatus;
+  issueDate: string;
+  dueDate: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  notes?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InvoiceItemInput {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface InvoiceInput {
+  clientId: string;
+  caseId?: string;
+  issueDate: string;
+  dueDate: string;
+  items: InvoiceItemInput[];
+  taxRate?: number;
+  notes?: string;
+}
+
+export interface InvoiceList {
+  data: Invoice[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface InvoiceStatusUpdate {
+  status: InvoiceStatus;
+}
+
+export type ListInvoicesParams = {
+  clientId?: string;
+  caseId?: string;
+  status?: InvoiceStatus;
+  page?: number;
+  limit?: number;
+};
+
+
+// ─── Expense types ────────────────────────────────────────────────────────────
+
+export const EXPENSE_CATEGORIES = [
+  "Filing Fees",
+  "Court Fees",
+  "Travel",
+  "Parking",
+  "Postage & Courier",
+  "Printing & Copying",
+  "Phone & Communication",
+  "Office Supplies",
+  "Professional Fees",
+  "Expert Witness",
+  "Process Server",
+  "Transcripts",
+  "Software & Subscriptions",
+  "Marketing",
+  "Other",
+] as const;
+
+export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
+
+export interface Expense {
+  id: string;
+  tenantId: string;
+  caseId?: string | null;
+  caseNumber?: number | null;
+  clientId?: string | null;
+  clientName?: string | null;
+  category: string;
+  amount: number;
+  date: string;
+  description: string;
+  vendor?: string | null;
+  receiptUrl?: string | null;
+  isBillable: boolean;
+  isBilled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ExpenseInput {
+  caseId?: string;
+  category: string;
+  amount: number;
+  date: string;
+  description: string;
+  vendor?: string;
+  receiptUrl?: string;
+  isBillable?: boolean;
+}
+
+export interface ExpenseUpdate {
+  caseId?: string | null;
+  category?: string;
+  amount?: number;
+  date?: string;
+  description?: string;
+  vendor?: string | null;
+  receiptUrl?: string | null;
+  isBillable?: boolean;
+  isBilled?: boolean;
+}
+
+export interface ExpenseList {
+  data: Expense[];
+  total: number;
+  totalAmount: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ExpenseSummary {
+  totalAmount: number;
+  billableAmount: number;
+  billedAmount: number;
+  unbilledAmount: number;
+  firmAmount: number;
+  caseAmount: number;
+  count: number;
+  byCategory: { category: string; amount: number; count: number }[];
+  byMonth:    { month: string;    amount: number; count: number }[];
+  topVendors: { vendor: string;   amount: number; count: number }[];
+}
+
+export type ListExpensesParams = {
+  caseId?:    string;
+  clientId?:  string;
+  category?:  string;
+  firmOnly?:  boolean;
+  billable?:  boolean;
+  billed?:    boolean;
+  dateFrom?:  string;
+  dateTo?:    string;
+  search?:    string;
+  page?:      number;
+  limit?:     number;
+};
+
+export type GetExpenseSummaryParams = {
+  dateFrom?: string;
+  dateTo?:   string;
+  caseId?:   string;
+};
+
+
+// ─── Appointment types ────────────────────────────────────────────────────────
+
+export const APPOINTMENT_TYPES = [
+  "Consultation",
+  "Court Appearance",
+  "Client Meeting",
+  "Phone Call",
+  "Video Call",
+  "Document Review",
+  "Mediation",
+  "Deposition",
+  "Site Visit",
+  "Other",
+] as const;
+
+export const APPOINTMENT_STATUSES = [
+  "scheduled",
+  "confirmed",
+  "completed",
+  "cancelled",
+  "no_show",
+] as const;
+
+export type AppointmentType   = typeof APPOINTMENT_TYPES[number];
+export type AppointmentStatus = typeof APPOINTMENT_STATUSES[number];
+
+export interface Appointment {
+  id: string;
+  tenantId: string;
+  clientId?: string | null;
+  clientName?: string | null;
+  caseId?: string | null;
+  caseNumber?: number | null;
+  title: string;
+  type: string;
+  startAt: Date;
+  endAt: Date;
+  location?: string | null;
+  notes?: string | null;
+  status: AppointmentStatus;
+  reminderSent: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppointmentInput {
+  clientId?: string;
+  caseId?: string;
+  title: string;
+  type: string;
+  startAt: string;
+  endAt: string;
+  location?: string;
+  notes?: string;
+  status?: AppointmentStatus;
+}
+
+export interface AppointmentUpdate {
+  clientId?: string | null;
+  caseId?: string | null;
+  title?: string;
+  type?: string;
+  startAt?: string;
+  endAt?: string;
+  location?: string | null;
+  notes?: string | null;
+  status?: AppointmentStatus;
+}
+
+export interface AppointmentList {
+  data: Appointment[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ConflictCheck {
+  hasConflict: boolean;
+  conflicts: Appointment[];
+}
+
+export type ListAppointmentsParams = {
+  clientId?: string;
+  caseId?: string;
+  type?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  upcoming?: boolean;
+  page?: number;
+  limit?: number;
+};
+
+export type CalendarParams = {
+  year: number;
+  month: number;
+};
+
+
+// ─── Conflict Checker types ───────────────────────────────────────────────────
+
+export type ConflictMatchType = 'exact' | 'strong' | 'possible';
+
+export interface ClientConflictResult {
+  id: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  leadSourceChannel: string;
+  createdAt: Date;
+  score: number;           // 0-100
+  reasons: string[];
+  matchType: ConflictMatchType;
+}
+
+export interface CaseConflictResult {
+  id: string;
+  caseNumber: number;
+  clientId: string;
+  clientName: string;
+  ticketNumber?: string | null;
+  statuteCode?: string | null;
+  offenceDescription?: string | null;
+  courtLocation?: string | null;
+  status: string;
+  intakeDate: string;
+  score: number;
+  reasons: string[];
+  matchType: ConflictMatchType;
+}
+
+export interface ClientConflictResponse {
+  results: ClientConflictResult[];
+  query: { name?: string; phone?: string; email?: string };
+}
+
+export interface CaseConflictResponse {
+  results: CaseConflictResult[];
+  query: { ticketNumber?: string; statuteCode?: string; clientId?: string };
+}
+
+export interface UnifiedSearchClient {
+  type: 'client';
+  id: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  leadSourceChannel: string;
+  createdAt: Date;
+  score: number;
+}
+
+export interface UnifiedSearchCase {
+  type: 'case';
+  id: string;
+  caseNumber: number;
+  clientId: string;
+  clientName: string;
+  ticketNumber?: string | null;
+  statuteCode?: string | null;
+  offenceDescription?: string | null;
+  status: string;
+  intakeDate: string;
+  score: number;
+}
+
+export interface UnifiedSearchResponse {
+  query: string;
+  total: number;
+  clients: UnifiedSearchClient[];
+  cases: UnifiedSearchCase[];
+  all: (UnifiedSearchClient | UnifiedSearchCase)[];
+}
+
+export type CheckClientConflictParams = {
+  name?: string;
+  phone?: string;
+  email?: string;
+  excludeId?: string;
+};
+
+export type CheckCaseConflictParams = {
+  ticketNumber?: string;
+  statuteCode?: string;
+  clientId?: string;
+  excludeId?: string;
+};

@@ -12,12 +12,24 @@ tags:
     description: Health operations
   - name: dashboard
     description: Dashboard summary operations
+  - name: workspaces
+    description: Workspace (tenant) management and calendar feed
+  - name: notifications
+    description: In-app notification feed
   - name: clients
     description: Client records
   - name: cases
     description: Case records
   - name: payments
     description: Case payments
+  - name: documents
+    description: Case documents
+  - name: trust
+    description: Trust accounting ledger
+  - name: signatures
+    description: Signature requests and public signing
+  - name: portal
+    description: Public client portal (token access)
   - name: reports
     description: Reporting and exports
   - name: imports
@@ -48,6 +60,100 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Dashboard"
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      tags: [workspaces]
+      summary: List workspaces
+      description: >
+        Returns the workspaces visible to the caller. With Clerk enabled this is
+        the caller's active organization; in local demo mode it lists every
+        workspace so the switcher can offer all of them.
+      responses:
+        "200":
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceList"
+    post:
+      operationId: createWorkspace
+      tags: [workspaces]
+      summary: Create a workspace
+      description: >
+        Creates a new tenant. When Clerk is enabled, pass the Clerk organization
+        ID as externalId so the workspace lines up with the session's org claim.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceInput"
+      responses:
+        "201":
+          description: Created workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "409":
+          description: A workspace with that externalId already exists
+  /notifications:
+    get:
+      operationId: getNotifications
+      tags: [notifications]
+      summary: Get the in-app notification feed
+      responses:
+        "200":
+          description: Notification feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notifications"
+  /calendar-feed:
+    get:
+      operationId: getCalendarFeed
+      tags: [workspaces]
+      summary: Get the workspace calendar feed details
+      responses:
+        "200":
+          description: Calendar feed details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarFeed"
+    post:
+      operationId: regenerateCalendarFeed
+      tags: [workspaces]
+      summary: Regenerate the workspace calendar feed token
+      responses:
+        "200":
+          description: Regenerated calendar feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarFeed"
+  /calendar/{token}/feed.ics:
+    get:
+      operationId: getCalendarFeedFile
+      tags: [workspaces]
+      summary: Subscribe to the workspace calendar (ICS)
+      description: Public endpoint — the token authorizes access.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ICS calendar
+          content:
+            text/calendar:
+              schema:
+                type: string
+        "404":
+          description: Unknown calendar token
   /clients:
     get:
       operationId: listClients
@@ -58,15 +164,26 @@ paths:
           name: search
           schema:
             type: string
+        - in: query
+          name: page
+          schema:
+            type: number
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: number
+            minimum: 1
+            maximum: 100
+            default: 20
       responses:
         "200":
-          description: Client list
+          description: Paginated client list
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Client"
+                $ref: "#/components/schemas/PaginatedClients"
     post:
       operationId: createClient
       tags: [clients]
@@ -84,6 +201,104 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Client"
+  /clients/{id}:
+    get:
+      operationId: getClient
+      tags: [clients]
+      summary: Get a client by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Client detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          description: Client not found
+    patch:
+      operationId: updateClient
+      tags: [clients]
+      summary: Update a client
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientUpdate"
+      responses:
+        "200":
+          description: Updated client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          description: Client not found
+    delete:
+      operationId: deleteClient
+      tags: [clients]
+      summary: Soft-delete a client
+      description: Refuses with 409 while the client still has non-deleted cases.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Client deleted
+        "404":
+          description: Client not found
+        "409":
+          description: Client still has active cases
+  /clients/{id}/portal:
+    post:
+      operationId: createPortalLink
+      tags: [clients]
+      summary: Issue or rotate a client portal link
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Portal link token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortalLink"
+        "404":
+          description: Client not found
+    delete:
+      operationId: revokePortalLink
+      tags: [clients]
+      summary: Revoke a client portal link
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Portal link revoked
+        "404":
+          description: Client not found
   /cases:
     get:
       operationId: listCases
@@ -107,6 +322,10 @@ paths:
           schema:
             type: boolean
         - in: query
+          name: clientId
+          schema:
+            type: string
+        - in: query
           name: dateFrom
           schema:
             type: string
@@ -116,15 +335,26 @@ paths:
           schema:
             type: string
             format: date
+        - in: query
+          name: page
+          schema:
+            type: number
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: number
+            minimum: 1
+            maximum: 100
+            default: 20
       responses:
         "200":
-          description: Case list
+          description: Paginated case list
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Case"
+                $ref: "#/components/schemas/PaginatedCases"
     post:
       operationId: createCase
       tags: [cases]
@@ -246,6 +476,423 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Note"
+  /cases/{id}/notes/{noteId}:
+    patch:
+      operationId: updateNote
+      tags: [cases]
+      summary: Edit a case note
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: noteId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteUpdate"
+      responses:
+        "200":
+          description: Updated note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "404":
+          description: Case or note not found
+    delete:
+      operationId: deleteNote
+      tags: [cases]
+      summary: Remove a case note
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: noteId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Note deleted
+        "404":
+          description: Case or note not found
+  /cases/{id}/court-dates:
+    post:
+      operationId: createCourtDate
+      tags: [cases]
+      summary: Schedule a court date
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CourtDateInput"
+      responses:
+        "201":
+          description: Created court date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CourtDate"
+        "404":
+          description: Case not found
+  /cases/{id}/court-dates/{courtDateId}:
+    delete:
+      operationId: deleteCourtDate
+      tags: [cases]
+      summary: Remove a court date
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: courtDateId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Court date deleted
+        "404":
+          description: Case or court date not found
+  /cases/{id}/documents:
+    get:
+      operationId: listCaseDocuments
+      tags: [documents]
+      summary: List documents attached to a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentList"
+        "404":
+          description: Case not found
+    post:
+      operationId: createDocument
+      tags: [documents]
+      summary: Attach a document to a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentInput"
+      responses:
+        "201":
+          description: Created document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSummary"
+        "404":
+          description: Case not found
+  /cases/{id}/documents/{documentId}:
+    get:
+      operationId: getDocument
+      tags: [documents]
+      summary: Download a document
+      description: Returns document metadata plus the base64 data URL payload.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: documentId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentContent"
+        "404":
+          description: Case or document not found
+    delete:
+      operationId: deleteDocument
+      tags: [documents]
+      summary: Remove a document
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: documentId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Document deleted
+        "404":
+          description: Case or document not found
+  /cases/{id}/trust-entries:
+    get:
+      operationId: listTrustEntries
+      tags: [trust]
+      summary: List trust ledger entries for a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Trust ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustLedger"
+        "404":
+          description: Case not found
+    post:
+      operationId: createTrustEntry
+      tags: [trust]
+      summary: Record a trust ledger entry
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrustEntryInput"
+      responses:
+        "201":
+          description: Created trust entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustEntry"
+        "404":
+          description: Case not found
+        "422":
+          description: Withdrawal or transfer exceeds the available trust balance
+  /cases/{id}/trust-entries/{entryId}:
+    delete:
+      operationId: deleteTrustEntry
+      tags: [trust]
+      summary: Remove a trust ledger entry
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: entryId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Trust entry deleted
+        "404":
+          description: Case or trust entry not found
+  /cases/{id}/signature-requests:
+    get:
+      operationId: listSignatureRequests
+      tags: [signatures]
+      summary: List signature requests for a case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Signature request list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignatureRequestList"
+        "404":
+          description: Case not found
+    post:
+      operationId: createSignatureRequest
+      tags: [signatures]
+      summary: Request a signature on a case document or agreement
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignatureRequestInput"
+      responses:
+        "201":
+          description: Created signature request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignatureRequestSummary"
+        "400":
+          description: Provide either a documentId or agreementText
+        "404":
+          description: Case or document not found
+  /cases/{id}/signature-requests/{requestId}:
+    delete:
+      operationId: deleteSignatureRequest
+      tags: [signatures]
+      summary: Remove a signature request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Signature request deleted
+        "404":
+          description: Case or signature request not found
+  /portal/{token}:
+    get:
+      operationId: getPortalView
+      tags: [portal]
+      summary: Get a client's portal view
+      description: Public endpoint — the token authorizes access.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Portal view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortalView"
+        "404":
+          description: Unknown or revoked portal token
+  /portal/{token}/documents/{documentId}:
+    get:
+      operationId: downloadPortalDocument
+      tags: [portal]
+      summary: Download a document via the portal
+      description: Public endpoint — the token authorizes access.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: documentId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentContent"
+        "404":
+          description: Unknown token or document
+  /sign/{token}:
+    get:
+      operationId: getSignatureRequest
+      tags: [signatures]
+      summary: Get a signature request for signing
+      description: Public endpoint — the token authorizes access.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Signature request view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignatureRequestView"
+        "404":
+          description: Unknown signature token
+    post:
+      operationId: signSignatureRequest
+      tags: [signatures]
+      summary: Sign a signature request
+      description: Public endpoint — the token authorizes access.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignaturePayload"
+      responses:
+        "204":
+          description: Signed
+        "404":
+          description: Unknown signature token
+        "409":
+          description: Request already signed
   /reports/summary:
     get:
       operationId: getReportsSummary
@@ -317,7 +964,7 @@ components:
         - status
     Client:
       type: object
-      required: [id, fullName, leadSourceChannel, createdAt]
+      required: [id, fullName, leadSourceChannel, createdAt, portalToken]
       properties:
         id: { type: string }
         fullName: { type: string }
@@ -325,10 +972,21 @@ components:
         email: { type: ["string", "null"] }
         leadSourceChannel: { type: string }
         leadSourceDetail: { type: ["string", "null"] }
+        portalToken:
+          type: ["string", "null"]
+          description: Active client-portal token, or null when no link is issued.
         createdAt: { type: string, format: date-time }
     ClientInput:
       type: object
       required: [fullName, leadSourceChannel]
+      properties:
+        fullName: { type: string, minLength: 1 }
+        phone: { type: string }
+        email: { type: string }
+        leadSourceChannel: { type: string, minLength: 1 }
+        leadSourceDetail: { type: string }
+    ClientUpdate:
+      type: object
       properties:
         fullName: { type: string, minLength: 1 }
         phone: { type: string }
@@ -351,11 +1009,52 @@ components:
         courtLocation: { type: ["string", "null"] }
         intakeDate: { type: string, format: date }
         offenceDate: { type: string, format: date }
+        responseDeadline: { type: ["string", "null"], format: date }
+        citationIssuingAgency: { type: ["string", "null"] }
+        officerName: { type: ["string", "null"] }
+        officerBadgeNumber: { type: ["string", "null"] }
+        offenceLocation: { type: ["string", "null"] }
+        speedAlleged: { type: ["number", "null"] }
+        speedLimit: { type: ["number", "null"] }
+        speedUnit: { type: ["string", "null"], enum: ["km/h", "mph"] }
+        licencePlate: { type: ["string", "null"] }
+        licencePlateRegion: { type: ["string", "null"] }
+        vehicleMake: { type: ["string", "null"] }
+        vehicleModel: { type: ["string", "null"] }
+        vehicleYear: { type: ["number", "null"] }
+        vehicleColour: { type: ["string", "null"] }
+        vehicleVIN: { type: ["string", "null"] }
+        driversLicenceNumber: { type: ["string", "null"] }
+        driversLicenceRegion: { type: ["string", "null"] }
+        driversLicenceExpiry: { type: ["string", "null"], format: date }
+        courtFileNumber: { type: ["string", "null"] }
+        courtRoomNumber: { type: ["string", "null"] }
+        courtJurisdiction: { type: ["string", "null"] }
+        hearingType: { type: ["string", "null"] }
+        partType: { type: ["string", "null"] }
         status: { type: string }
         totalFee: { type: number }
+        retainerAmount: { type: ["number", "null"] }
+        retainerPaidDate: { type: ["string", "null"], format: date }
+        setFine: { type: ["number", "null"] }
+        victimSurcharge: { type: ["number", "null"] }
+        disbursements: { type: number }
         amountReceived: { type: number }
         balanceOwing: { type: number }
+        isFullyPaid: { type: boolean }
+        outcome: { type: ["string", "null"] }
+        reducedCharge: { type: ["string", "null"] }
+        courtFineAmount: { type: ["number", "null"] }
+        demeritPoints: { type: ["number", "null"] }
+        licenceSuspended: { type: ["boolean", "null"] }
+        suspensionDays: { type: ["number", "null"] }
+        closedDate: { type: ["string", "null"], format: date }
         nextFollowUpDate: { type: ["string", "null"], format: date }
+        disclosureRequestedDate: { type: ["string", "null"], format: date }
+        disclosureReceivedDate: { type: ["string", "null"], format: date }
+        priority: { type: string }
+        tags: { type: array, items: { type: string } }
+        assignedTo: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     CaseInput:
@@ -370,33 +1069,125 @@ components:
         offenceDescription: { type: string }
         officeCode: { type: string }
         courtLocation: { type: string }
-        status: { type: string }
+        responseDeadline: { type: string, format: date }
+        citationIssuingAgency: { type: string }
+        officerName: { type: string }
+        officerBadgeNumber: { type: string }
+        offenceLocation: { type: string }
+        speedAlleged: { type: number }
+        speedLimit: { type: number }
+        speedUnit: { type: string, enum: ["km/h", "mph"] }
+        licencePlate: { type: string }
+        licencePlateRegion: { type: string }
+        vehicleMake: { type: string }
+        vehicleModel: { type: string }
+        vehicleYear: { type: number }
+        vehicleColour: { type: string }
+        vehicleVIN: { type: string }
+        driversLicenceNumber: { type: string }
+        driversLicenceRegion: { type: string }
+        driversLicenceExpiry: { type: string, format: date }
+        courtFileNumber: { type: string }
+        courtRoomNumber: { type: string }
+        courtJurisdiction: { type: string }
+        hearingType: { type: string }
+        partType: { type: string }
+        status:
+          type: string
+          enum: [Open, Disclosure Requested, Filed, Resummoned, Awaiting Trial, Withdrawn, Resolved, Closed]
         totalFee: { type: number, minimum: 0 }
+        retainerAmount: { type: number }
+        retainerPaidDate: { type: string, format: date }
+        setFine: { type: number }
+        victimSurcharge: { type: number }
+        disbursements: { type: number, minimum: 0 }
+        outcome: { type: string }
+        reducedCharge: { type: string }
+        courtFineAmount: { type: number }
+        demeritPoints: { type: number }
+        licenceSuspended: { type: boolean }
+        suspensionDays: { type: number }
+        closedDate: { type: string, format: date }
         nextFollowUpDate: { type: string, format: date }
+        disclosureRequestedDate: { type: string, format: date }
+        disclosureReceivedDate: { type: string, format: date }
+        priority: { type: string, enum: [Low, Normal, High, Urgent] }
+        tags: { type: array, items: { type: string } }
+        assignedTo: { type: string }
         firstNote: { type: string }
     CaseUpdate:
       type: object
       properties:
         intakeDate: { type: string, format: date }
         offenceDate: { type: string, format: date }
-        ticketNumber: { type: string }
-        statuteCode: { type: string }
-        offenceDescription: { type: string }
-        officeCode: { type: string }
-        courtLocation: { type: string }
-        status: { type: string }
+        ticketNumber: { type: ["string", "null"] }
+        statuteCode: { type: ["string", "null"] }
+        offenceDescription: { type: ["string", "null"] }
+        officeCode: { type: ["string", "null"] }
+        courtLocation: { type: ["string", "null"] }
+        responseDeadline: { type: ["string", "null"], format: date }
+        citationIssuingAgency: { type: ["string", "null"] }
+        officerName: { type: ["string", "null"] }
+        officerBadgeNumber: { type: ["string", "null"] }
+        offenceLocation: { type: ["string", "null"] }
+        speedAlleged: { type: ["number", "null"] }
+        speedLimit: { type: ["number", "null"] }
+        speedUnit: { type: ["string", "null"], enum: ["km/h", "mph"] }
+        licencePlate: { type: ["string", "null"] }
+        licencePlateRegion: { type: ["string", "null"] }
+        vehicleMake: { type: ["string", "null"] }
+        vehicleModel: { type: ["string", "null"] }
+        vehicleYear: { type: ["number", "null"] }
+        vehicleColour: { type: ["string", "null"] }
+        vehicleVIN: { type: ["string", "null"] }
+        driversLicenceNumber: { type: ["string", "null"] }
+        driversLicenceRegion: { type: ["string", "null"] }
+        driversLicenceExpiry: { type: ["string", "null"], format: date }
+        courtFileNumber: { type: ["string", "null"] }
+        courtRoomNumber: { type: ["string", "null"] }
+        courtJurisdiction: { type: ["string", "null"] }
+        hearingType: { type: ["string", "null"] }
+        partType: { type: ["string", "null"] }
+        status:
+          type: string
+          enum: [Open, Disclosure Requested, Filed, Resummoned, Awaiting Trial, Withdrawn, Resolved, Closed]
         totalFee: { type: number, minimum: 0 }
+        retainerAmount: { type: ["number", "null"] }
+        retainerPaidDate: { type: ["string", "null"], format: date }
+        setFine: { type: ["number", "null"] }
+        victimSurcharge: { type: ["number", "null"] }
+        disbursements: { type: number, minimum: 0 }
+        outcome: { type: ["string", "null"] }
+        reducedCharge: { type: ["string", "null"] }
+        courtFineAmount: { type: ["number", "null"] }
+        demeritPoints: { type: ["number", "null"] }
+        licenceSuspended: { type: ["boolean", "null"] }
+        suspensionDays: { type: ["number", "null"] }
+        closedDate: { type: ["string", "null"], format: date }
         nextFollowUpDate: { type: ["string", "null"], format: date }
+        disclosureRequestedDate: { type: ["string", "null"], format: date }
+        disclosureReceivedDate: { type: ["string", "null"], format: date }
+        priority: { type: string, enum: [Low, Normal, High, Urgent] }
+        tags: { type: array, items: { type: string } }
+        assignedTo: { type: ["string", "null"] }
     Payment:
       type: object
-      required: [id, caseId, amount, date]
+      required: [id, caseId, amount, date, allocationType, isVoided, isRefund]
       properties:
         id: { type: string }
         caseId: { type: string }
         amount: { type: number }
         date: { type: string, format: date }
         method: { type: ["string", "null"] }
+        reference: { type: ["string", "null"] }
+        allocationType: { type: string }
+        receivedBy: { type: ["string", "null"] }
         note: { type: ["string", "null"] }
+        isVoided: { type: boolean }
+        voidedAt: { type: ["string", "null"], format: date-time }
+        voidReason: { type: ["string", "null"] }
+        isRefund: { type: boolean }
+        refundForId: { type: ["string", "null"] }
     PaymentInput:
       type: object
       required: [amount, date]
@@ -404,6 +1195,9 @@ components:
         amount: { type: number, minimum: 0.01 }
         date: { type: string, format: date }
         method: { type: string }
+        reference: { type: string }
+        allocationType: { type: string, enum: [Retainer, Installment, Final Payment, Disbursement, General] }
+        receivedBy: { type: string }
         note: { type: string }
     Note:
       type: object
@@ -418,6 +1212,12 @@ components:
       required: [text]
       properties:
         text: { type: string, minLength: 1 }
+        author: { type: string }
+    NoteUpdate:
+      type: object
+      properties:
+        text: { type: string, minLength: 1 }
+        author: { type: ["string", "null"] }
     CourtDate:
       type: object
       required: [id, date]
@@ -425,6 +1225,46 @@ components:
         id: { type: string }
         date: { type: string, format: date }
         outcome: { type: ["string", "null"] }
+        notes: { type: ["string", "null"] }
+    CourtDateInput:
+      type: object
+      required: [date]
+      properties:
+        date: { type: string, format: date }
+        outcome: { type: string }
+        notes: { type: string }
+    DocumentSummary:
+      type: object
+      required: [id, caseId, name, size, uploadedAt]
+      properties:
+        id: { type: string }
+        caseId: { type: string }
+        name: { type: string }
+        type: { type: ["string", "null"] }
+        size: { type: number, minimum: 0 }
+        uploadedAt: { type: string, format: date-time }
+    DocumentInput:
+      type: object
+      required: [name, dataUrl]
+      properties:
+        name: { type: string, minLength: 1 }
+        type: { type: string }
+        size: { type: number, minimum: 0 }
+        dataUrl: { type: string, minLength: 1, maxLength: 8000000 }
+    DocumentContent:
+      allOf:
+        - $ref: "#/components/schemas/DocumentSummary"
+        - type: object
+          required: [dataUrl]
+          properties:
+            dataUrl: { type: string }
+    DocumentList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/DocumentSummary" }
     CaseDetail:
       allOf:
         - $ref: "#/components/schemas/Case"
@@ -442,9 +1282,10 @@ components:
               items: { $ref: "#/components/schemas/Payment" }
     Dashboard:
       type: object
-      required: [activeCases, outstandingBalance, dueFollowUps, attentionCases, statusCounts]
+      required: [activeCases, closedCases, outstandingBalance, dueFollowUps, attentionCases, statusCounts, totalFees, totalCollected, recentPayments, courtDates]
       properties:
         activeCases: { type: number }
+        closedCases: { type: number }
         outstandingBalance: { type: number }
         dueFollowUps: { type: number }
         attentionCases:
@@ -453,6 +1294,23 @@ components:
         statusCounts:
           type: object
           additionalProperties: { type: number }
+        totalFees: { type: number }
+        totalCollected: { type: number }
+        recentPayments:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        courtDates:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardCourtDate" }
+    DashboardCourtDate:
+      type: object
+      required: [caseId, caseNumber, clientName, date]
+      properties:
+        caseId: { type: string }
+        caseNumber: { type: number }
+        clientName: { type: string }
+        date: { type: string, format: date }
+        outcome: { type: ["string", "null"] }
     ReportsSummary:
       type: object
       required: [leadSources, referralBreakdown, statusCounts, outstandingCases]
@@ -478,6 +1336,26 @@ components:
       properties:
         label: { type: string }
         count: { type: number }
+    PaginatedCases:
+      type: object
+      required: [data, total, page, pageSize]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Case" }
+        total: { type: number }
+        page: { type: number }
+        pageSize: { type: number }
+    PaginatedClients:
+      type: object
+      required: [data, total, page, pageSize]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Client" }
+        total: { type: number }
+        page: { type: number }
+        pageSize: { type: number }
     ImportInput:
       type: object
       required: [rows]
@@ -506,4 +1384,175 @@ components:
       properties:
         imported: { type: number }
         skipped: { type: number }
+    Workspace:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        calendarToken: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+    WorkspaceInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        externalId: { type: string, description: Clerk organization ID to link when Clerk is enabled }
+    WorkspaceList:
+      type: object
+      required: [data, defaultWorkspaceId]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Workspace" }
+        defaultWorkspaceId: { type: ["string", "null"] }
+    NotificationItem:
+      type: object
+      required: [kind, caseId, caseNumber, clientName, title, date, days]
+      properties:
+        kind: { type: string, enum: [court-date, follow-up, outstanding, signature] }
+        caseId: { type: string }
+        caseNumber: { type: number }
+        clientName: { type: string }
+        title: { type: string }
+        detail: { type: ["string", "null"] }
+        date: { type: ["string", "null"], format: date }
+        days: { type: number }
+    Notifications:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NotificationItem" }
+        total: { type: number }
+    CalendarFeed:
+      type: object
+      required: [token, url]
+      properties:
+        token: { type: string }
+        url: { type: string }
+    PortalLink:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+    PortalCourtDate:
+      type: object
+      required: [date]
+      properties:
+        date: { type: string, format: date }
+        outcome: { type: ["string", "null"] }
+    PortalPayment:
+      type: object
+      required: [amount, date]
+      properties:
+        amount: { type: number }
+        date: { type: string, format: date }
+        method: { type: ["string", "null"] }
+        note: { type: ["string", "null"] }
+    PortalCase:
+      type: object
+      required: [id, caseNumber, status, offenceDate, totalFee, amountReceived, balanceOwing, courtDates, payments, documents]
+      properties:
+        id: { type: string }
+        caseNumber: { type: number }
+        status: { type: string }
+        ticketNumber: { type: ["string", "null"] }
+        offenceDescription: { type: ["string", "null"] }
+        offenceDate: { type: string, format: date }
+        totalFee: { type: number }
+        amountReceived: { type: number }
+        balanceOwing: { type: number }
+        courtDates:
+          type: array
+          items: { $ref: "#/components/schemas/PortalCourtDate" }
+        payments:
+          type: array
+          items: { $ref: "#/components/schemas/PortalPayment" }
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/DocumentSummary" }
+    PortalView:
+      type: object
+      required: [clientName, cases]
+      properties:
+        clientName: { type: string }
+        cases:
+          type: array
+          items: { $ref: "#/components/schemas/PortalCase" }
+    TrustEntry:
+      type: object
+      required: [id, caseId, type, amount, date, createdAt]
+      properties:
+        id: { type: string }
+        caseId: { type: string }
+        type: { type: string, enum: [deposit, withdrawal, transfer] }
+        amount: { type: number }
+        date: { type: string, format: date }
+        note: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+    TrustEntryInput:
+      type: object
+      required: [type, amount, date]
+      properties:
+        type: { type: string, enum: [deposit, withdrawal, transfer] }
+        amount: { type: number, minimum: 0.01 }
+        date: { type: string, format: date }
+        note: { type: string }
+    TrustLedger:
+      type: object
+      required: [data, trustBalance]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/TrustEntry" }
+        trustBalance: { type: number }
+    SignatureRequestSummary:
+      type: object
+      required: [id, caseId, title, status, token, createdAt]
+      properties:
+        id: { type: string }
+        caseId: { type: string }
+        title: { type: string }
+        documentId: { type: ["string", "null"] }
+        documentName: { type: ["string", "null"] }
+        status: { type: string, enum: [pending, signed] }
+        token: { type: string }
+        signerName: { type: ["string", "null"] }
+        signedAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+    SignatureRequestInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        documentId: { type: string }
+        agreementText: { type: string, maxLength: 20000 }
+    SignatureRequestList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/SignatureRequestSummary" }
+    SignatureRequestView:
+      type: object
+      required: [title, status, caseNumber, clientName, createdAt]
+      properties:
+        title: { type: string }
+        agreementText: { type: ["string", "null"] }
+        documentName: { type: ["string", "null"] }
+        status: { type: string, enum: [pending, signed] }
+        caseNumber: { type: number }
+        clientName: { type: string }
+        signerName: { type: ["string", "null"] }
+        signedAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+    SignaturePayload:
+      type: object
+      required: [signerName, signatureData]
+      properties:
+        signerName: { type: string, minLength: 1, maxLength: 120 }
+        signatureData: { type: string, minLength: 1, maxLength: 2000000, description: Data URL of the signature image }
 

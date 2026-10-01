@@ -11,5 +11,8 @@ export interface PaymentInput {
   amount: number;
   date: Date;
   method?: string;
+  reference?: string;
+  allocationType?: 'Retainer' | 'Installment' | 'Final Payment' | 'Disbursement' | 'General';
+  receivedBy?: string;
   note?: string;
 }

@@ -6,12 +6,19 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { Case } from './case';
+import type { DashboardCourtDate } from './dashboardCourtDate';
 import type { DashboardStatusCounts } from './dashboardStatusCounts';
+import type { Payment } from './payment';
 
 export interface Dashboard {
   activeCases: number;
+  closedCases: number;
   outstandingBalance: number;
   dueFollowUps: number;
   attentionCases: Case[];
   statusCounts: DashboardStatusCounts;
+  totalFees: number;
+  totalCollected: number;
+  recentPayments: Payment[];
+  courtDates: DashboardCourtDate[];
 }

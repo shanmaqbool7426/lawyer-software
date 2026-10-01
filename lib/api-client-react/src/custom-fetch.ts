@@ -17,6 +17,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _workspaceId: string | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -42,6 +43,14 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/**
+ * Attach an `x-workspace-id` header to every request so the API can scope
+ * queries to the selected workspace (tenant). Pass `null` to clear it.
+ */
+export function setWorkspaceId(id: string | null): void {
+  _workspaceId = id ? id : null;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -356,6 +365,11 @@ export async function customFetch<T = unknown>(
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
     }
+  }
+
+  // Scope the request to the selected workspace when one is set.
+  if (_workspaceId && !headers.has("x-workspace-id")) {
+    headers.set("x-workspace-id", _workspaceId);
   }
 
   const requestInfo = { method, url: resolveUrl(input) };

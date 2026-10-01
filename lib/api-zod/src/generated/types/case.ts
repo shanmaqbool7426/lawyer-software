@@ -25,12 +25,90 @@ export interface Case {
   courtLocation?: string | null;
   intakeDate: Date;
   offenceDate: Date;
+  /** @nullable */
+  responseDeadline?: Date | null;
+  /** @nullable */
+  citationIssuingAgency?: string | null;
+  /** @nullable */
+  officerName?: string | null;
+  /** @nullable */
+  officerBadgeNumber?: string | null;
+  /** @nullable */
+  offenceLocation?: string | null;
+  /** @nullable */
+  speedAlleged?: number | null;
+  /** @nullable */
+  speedLimit?: number | null;
+  /** @nullable */
+  speedUnit?: string | null;
+  /** @nullable */
+  licencePlate?: string | null;
+  /** @nullable */
+  licencePlateRegion?: string | null;
+  /** @nullable */
+  vehicleMake?: string | null;
+  /** @nullable */
+  vehicleModel?: string | null;
+  /** @nullable */
+  vehicleYear?: number | null;
+  /** @nullable */
+  vehicleColour?: string | null;
+  /** @nullable */
+  vehicleVIN?: string | null;
+  /** @nullable */
+  driversLicenceNumber?: string | null;
+  /** @nullable */
+  driversLicenceRegion?: string | null;
+  /** @nullable */
+  driversLicenceExpiry?: Date | null;
+  /** @nullable */
+  courtFileNumber?: string | null;
+  /** @nullable */
+  courtRoomNumber?: string | null;
+  /** @nullable */
+  courtJurisdiction?: string | null;
+  /** @nullable */
+  hearingType?: string | null;
+  /** @nullable */
+  partType?: string | null;
   status: string;
   totalFee: number;
+  /** @nullable */
+  retainerAmount?: number | null;
+  /** @nullable */
+  retainerPaidDate?: Date | null;
+  /** @nullable */
+  setFine?: number | null;
+  /** @nullable */
+  victimSurcharge?: number | null;
+  disbursements: number;
   amountReceived: number;
   balanceOwing: number;
+  isFullyPaid: boolean;
+  /** @nullable */
+  outcome?: string | null;
+  /** @nullable */
+  reducedCharge?: string | null;
+  /** @nullable */
+  courtFineAmount?: number | null;
+  /** @nullable */
+  demeritPoints?: number | null;
+  /** @nullable */
+  licenceSuspended?: boolean | null;
+  /** @nullable */
+  suspensionDays?: number | null;
+  /** @nullable */
+  closedDate?: Date | null;
   /** @nullable */
   nextFollowUpDate?: Date | null;
+  /** @nullable */
+  disclosureRequestedDate?: Date | null;
+  /** @nullable */
+  disclosureReceivedDate?: Date | null;
+  priority?: string;
+  tags?: string[];
+  /** @nullable */
+  assignedTo?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
