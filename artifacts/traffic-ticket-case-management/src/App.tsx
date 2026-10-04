@@ -204,10 +204,14 @@ function NavLink({ href, icon: Icon, children }: { href: string; icon: typeof La
   return <Link href={href} data-testid={`link-${href.slice(1) || 'dashboard'}`} className={`nav-link ${active ? 'active' : ''}`}><Icon /> <span>{children}</span></Link>;
 }
 
+function NavSoon({ icon: Icon, children }: { icon: typeof LayoutDashboard; children: React.ReactNode }) {
+  return <div className="nav-link nav-soon" aria-disabled="true" title="Coming soon"><Icon /> <span>{children}</span><span className="pill-soon">Soon</span></div>;
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   const health = useHealthCheck();
   const signOut = demoMode ? undefined : useClerk().signOut;
-  const nav = <><NavLink href="/" icon={LayoutDashboard}>Overview</NavLink><NavLink href="/cases" icon={BriefcaseBusiness}>Cases</NavLink><NavLink href="/clients" icon={UsersRound}>Clients</NavLink><NavLink href="/invoices" icon={ReceiptText}>Invoices</NavLink><NavLink href="/expenses" icon={Wallet}>Expenses</NavLink><NavLink href="/appointments" icon={CalendarDays}>Appointments</NavLink><NavLink href="/conflict-check" icon={ShieldAlert}>Conflict Check</NavLink><NavLink href="/reports" icon={BarChart3}>Reports</NavLink><NavLink href="/import" icon={Import}>Import legacy</NavLink></>;
+  const nav = <><NavLink href="/" icon={LayoutDashboard}>Overview</NavLink><NavLink href="/cases" icon={BriefcaseBusiness}>Cases</NavLink><NavLink href="/clients" icon={UsersRound}>Clients</NavLink><NavSoon icon={ReceiptText}>Invoices</NavSoon><NavSoon icon={Wallet}>Expenses</NavSoon><NavSoon icon={CalendarDays}>Appointments</NavSoon><NavSoon icon={ShieldAlert}>Conflict Check</NavSoon><NavSoon icon={BarChart3}>Reports</NavSoon><NavSoon icon={Import}>Import legacy</NavSoon></>;
   return <div className="app-shell">
     <aside className="sidebar">
       <Link href="/" className="brand" data-testid="link-brand" style={{ color: 'inherit', textDecoration: 'none', display: 'flex', gap: 10, alignItems: 'center' }}><div className="brand-mark">TT</div><div><div className="brand-name">Docketline</div><div className="brand-sub">Ontario traffic law</div></div></Link>

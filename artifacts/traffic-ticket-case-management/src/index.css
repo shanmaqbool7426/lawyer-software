@@ -608,3 +608,8 @@
   .invoice-doc { padding: 20px 18px; }
   .inv-meta { grid-template-columns: 1fr 1fr; }
 }
+
+/* ---- Coming-soon nav items (disabled modules) ---- */
+.nav-link.nav-soon { opacity: .45; cursor: not-allowed; user-select: none; }
+.nav-link.nav-soon:hover { color: hsl(var(--sidebar-foreground) / .72); background: transparent; transform: none; box-shadow: none; }
+.pill-soon { margin-left: auto; font: 700 8px var(--app-font-mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: hsl(var(--sidebar-accent)); color: hsl(var(--sidebar-foreground) / .5); white-space: nowrap; }
