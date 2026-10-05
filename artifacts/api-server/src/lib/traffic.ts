@@ -341,6 +341,7 @@ export async function getCaseDetail(tenantId: string, id: string) {
       id: note.id,
       text: note.text,
       author: note.author,
+      clientVisible: note.clientVisible ?? false,
       createdAt: note.createdAt,
     })),
     courtDates: courtDates.map((courtDate) => ({
@@ -353,9 +354,28 @@ export async function getCaseDetail(tenantId: string, id: string) {
   };
 }
 
-export async function addNote(tenantId: string, caseId: string, text: string, author = "Admin") {
-  const note = await NoteModel.create({ id: randomUUID(), tenantId, caseId, text, author });
-  return { id: note.id, text: note.text, author: note.author, createdAt: note.createdAt };
+export async function addNote(
+  tenantId: string,
+  caseId: string,
+  text: string,
+  author = "Admin",
+  clientVisible = false,
+) {
+  const note = await NoteModel.create({
+    id: randomUUID(),
+    tenantId,
+    caseId,
+    text,
+    author,
+    clientVisible,
+  });
+  return {
+    id: note.id,
+    text: note.text,
+    author: note.author,
+    clientVisible: note.clientVisible ?? false,
+    createdAt: note.createdAt,
+  };
 }
 
 export async function getNextCaseNumber(tenantId: string) {

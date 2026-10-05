@@ -59,6 +59,9 @@ import {
   CreatePortalLinkParams,
   CreatePortalLinkResponse,
   RevokePortalLinkParams,
+  SendPortalEmailParams,
+  SendPortalEmailBody,
+  SendPortalEmailResponse,
   ListTrustEntriesParams,
   ListTrustEntriesResponse,
   CreateTrustEntryParams,
@@ -104,6 +107,7 @@ import {
   toCase,
 } from "../lib/traffic";
 import { getDefaultOrganization, randomToken } from "../lib/tenancy";
+import { isEmailConfigured, portalLinkEmailHtml, sendEmail } from "../lib/email";
 
 const router: IRouter = Router();
 // Token-authenticated routes mounted without the Clerk/userId guard.
@@ -827,7 +831,13 @@ router.post("/cases/:id/notes", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Case not found" });
     return;
   }
-  const note = await addNote(tenantId, params.data.id, parsed.data.text, parsed.data.author ?? "Admin");
+  const note = await addNote(
+    tenantId,
+    params.data.id,
+    parsed.data.text,
+    parsed.data.author ?? "Admin",
+    parsed.data.clientVisible ?? false,
+  );
   res.status(201).json(CreateNoteResponse.parse(note));
 });
 
@@ -856,9 +866,16 @@ router.patch("/cases/:id/notes/:noteId", async (req, res): Promise<void> => {
   const data = parsed.data;
   if (data.text !== undefined) note.text = data.text;
   if (data.author !== undefined) note.author = data.author ?? null;
+  if (data.clientVisible !== undefined) note.clientVisible = data.clientVisible;
   await note.save();
   res.json(
-    UpdateNoteResponse.parse({ id: note.id, text: note.text, author: note.author, createdAt: note.createdAt }),
+    UpdateNoteResponse.parse({
+      id: note.id,
+      text: note.text,
+      author: note.author,
+      clientVisible: note.clientVisible ?? false,
+      createdAt: note.createdAt,
+    }),
   );
 });
 
@@ -1378,6 +1395,47 @@ router.delete("/clients/:id/portal", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+router.post("/clients/:id/portal/email", async (req, res): Promise<void> => {
+  const tenantId = tenantOf(res);
+  const parsed = SendPortalEmailParams.safeParse(req.params);
+  const body = SendPortalEmailBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const client = await ClientModel.findOne({ id: parsed.data.id, tenantId, isDeleted: { $ne: true } }).lean();
+  if (!client) {
+    res.status(404).json({ error: "Client not found" });
+    return;
+  }
+  // Reuse the existing token — emailing must never silently rotate a link the
+  // client already has. Only issue one when none exists yet.
+  let token = client.portalToken ?? null;
+  if (!token) {
+    token = randomToken();
+    await ClientModel.updateOne({ id: client.id, tenantId }, { $set: { portalToken: token } });
+  }
+  const host = req.get("host") ?? "localhost";
+  const proto = (req.get("x-forwarded-proto") ?? req.protocol ?? "http").split(",")[0].trim();
+  const url = `${proto}://${host}/portal/${token}`;
+  const to = body.data.email?.trim() || client.email || null;
+  let emailed = false;
+  if (to && isEmailConfigured()) {
+    const result = await sendEmail({
+      to,
+      subject: "Your case portal link — Docketline",
+      text: `Hello ${client.fullName},\n\nUse your private link to check case status, court dates, payments and documents:\n${url}\n\nThis link is personal to you — please don't forward it.`,
+      html: portalLinkEmailHtml(client.fullName, url),
+    });
+    emailed = result.ok;
+  }
+  res.json(SendPortalEmailResponse.parse({ token, url, emailed, to }));
+});
+
 // --- Trust ledger -----------------------------------------------------------
 
 function plainTrustEntry(entry: {
@@ -1659,12 +1717,15 @@ publicRouter.get("/portal/:token", async (req, res): Promise<void> => {
     .lean();
   const caseIds = cases.map((caseItem) => caseItem.id);
   // An empty $in matches nothing, so no branching is needed for new clients.
-  const [courtDates, payments, documents] = await Promise.all([
+  const [courtDates, payments, documents, clientNotes] = await Promise.all([
     CourtDateModel.find({ tenantId, caseId: { $in: caseIds } }).sort({ date: -1 }).lean(),
     PaymentModel.find({ tenantId, caseId: { $in: caseIds } }).sort({ date: -1 }).lean(),
     DocumentModel.find({ tenantId, caseId: { $in: caseIds } })
       .select("-dataUrl")
       .sort({ uploadedAt: -1 })
+      .lean(),
+    NoteModel.find({ tenantId, caseId: { $in: caseIds }, clientVisible: true })
+      .sort({ createdAt: -1 })
       .lean(),
   ]);
 
@@ -1687,6 +1748,9 @@ publicRouter.get("/portal/:token", async (req, res): Promise<void> => {
           courtDates: courtDates
             .filter((courtDate) => courtDate.caseId === caseItem.id)
             .map((courtDate) => ({ date: courtDate.date, outcome: courtDate.outcome ?? null })),
+          updates: clientNotes
+            .filter((note) => note.caseId === caseItem.id)
+            .map((note) => ({ text: note.text, author: note.author ?? null, createdAt: note.createdAt })),
           payments: casePayments.map((payment) => ({
             amount: Number(payment.amount),
             date: payment.date,

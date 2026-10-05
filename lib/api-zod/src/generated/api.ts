@@ -335,6 +335,25 @@ export const RevokePortalLinkResponse = zod.void()
 
 
 /**
+ * @summary Email the client their portal link (creates one if none exists)
+ */
+export const SendPortalEmailParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const SendPortalEmailBody = zod.object({
+  "email": zod.string().optional()
+})
+
+export const SendPortalEmailResponse = zod.object({
+  "token": zod.string(),
+  "url": zod.string(),
+  "emailed": zod.boolean(),
+  "to": zod.string().nullish()
+})
+
+
+/**
  * @summary Search and filter cases
  */
 export const listCasesQueryPageDefault = 1;
@@ -624,6 +643,7 @@ export const GetCaseResponse = zod.object({
   "id": zod.string(),
   "text": zod.string(),
   "author": zod.string().nullish(),
+  "clientVisible": zod.boolean().optional(),
   "createdAt": zod.coerce.date()
 })),
   "courtDates": zod.array(zod.object({
@@ -842,7 +862,8 @@ export const CreateNoteParams = zod.object({
 
 export const CreateNoteBody = zod.object({
   "text": zod.string().min(1),
-  "author": zod.string().optional()
+  "author": zod.string().optional(),
+  "clientVisible": zod.boolean().optional()
 })
 
 export const UpdateNoteParams = zod.object({
@@ -852,13 +873,15 @@ export const UpdateNoteParams = zod.object({
 
 export const UpdateNoteBody = zod.object({
   "text": zod.string().min(1).optional(),
-  "author": zod.string().nullish()
+  "author": zod.string().nullish(),
+  "clientVisible": zod.boolean().optional()
 })
 
 export const UpdateNoteResponse = zod.object({
   "id": zod.string(),
   "text": zod.string(),
   "author": zod.string().nullish(),
+  "clientVisible": zod.boolean().optional(),
   "createdAt": zod.coerce.date()
 })
 
@@ -871,6 +894,7 @@ export const CreateNoteResponse = zod.object({
   "id": zod.string(),
   "text": zod.string(),
   "author": zod.string().nullish(),
+  "clientVisible": zod.boolean().optional(),
   "createdAt": zod.coerce.date()
 })
 
@@ -1162,6 +1186,11 @@ export const GetPortalViewResponse = zod.object({
   "date": zod.coerce.date(),
   "method": zod.string().nullish(),
   "note": zod.string().nullish()
+})),
+  "updates": zod.array(zod.object({
+  "text": zod.string(),
+  "author": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
 })),
   "documents": zod.array(zod.object({
   "id": zod.string(),

@@ -299,6 +299,33 @@ paths:
           description: Portal link revoked
         "404":
           description: Client not found
+  /clients/{id}/portal/email:
+    post:
+      operationId: sendPortalEmail
+      tags: [clients]
+      summary: Email the client their portal link
+      description: Reuses the existing portal token (re-sending never rotates a link the client already has) and only issues a new token when none exists. Actual delivery requires RESEND_API_KEY on the server; without it the link is still generated and returned with emailed=false.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortalEmailInput"
+      responses:
+        "200":
+          description: Portal link details and whether the email was sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortalEmailResult"
+        "404":
+          description: Client not found
   /cases:
     get:
       operationId: listCases
@@ -452,6 +479,78 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Payment"
+  /cases/{id}/payments/{paymentId}/void:
+    patch:
+      operationId: voidCasePayment
+      tags: [payments]
+      summary: Void a recorded payment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Updated case detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseDetail"
+        "404":
+          description: Payment or case not found
+        "422":
+          description: Payment already voided or is a refund
+  /cases/{id}/payments/{paymentId}/refund:
+    post:
+      operationId: refundCasePayment
+      tags: [payments]
+      summary: Refund a recorded payment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: number }
+                date: { type: string }
+                reason: { type: string }
+      responses:
+        "200":
+          description: Updated case detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseDetail"
+        "404":
+          description: Payment or case not found
+        "422":
+          description: Refund exceeds the original payment or payment is voided/refunded
   /cases/{id}/notes:
     post:
       operationId: createNote
@@ -1207,17 +1306,20 @@ components:
         text: { type: string }
         author: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
+        clientVisible: { type: boolean }
     NoteInput:
       type: object
       required: [text]
       properties:
         text: { type: string, minLength: 1 }
         author: { type: string }
+        clientVisible: { type: boolean }
     NoteUpdate:
       type: object
       properties:
         text: { type: string, minLength: 1 }
         author: { type: ["string", "null"] }
+        clientVisible: { type: boolean }
     CourtDate:
       type: object
       required: [id, date]
@@ -1437,6 +1539,18 @@ components:
       required: [token]
       properties:
         token: { type: string }
+    PortalEmailInput:
+      type: object
+      properties:
+        email: { type: string }
+    PortalEmailResult:
+      type: object
+      required: [token, url, emailed]
+      properties:
+        token: { type: string }
+        url: { type: string }
+        emailed: { type: boolean }
+        to: { type: ["string", "null"] }
     PortalCourtDate:
       type: object
       required: [date]
@@ -1451,9 +1565,16 @@ components:
         date: { type: string, format: date }
         method: { type: ["string", "null"] }
         note: { type: ["string", "null"] }
+    PortalUpdate:
+      type: object
+      required: [text, createdAt]
+      properties:
+        text: { type: string }
+        author: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
     PortalCase:
       type: object
-      required: [id, caseNumber, status, offenceDate, totalFee, amountReceived, balanceOwing, courtDates, payments, documents]
+      required: [id, caseNumber, status, offenceDate, totalFee, amountReceived, balanceOwing, courtDates, payments, documents, updates]
       properties:
         id: { type: string }
         caseNumber: { type: number }
@@ -1473,6 +1594,9 @@ components:
         documents:
           type: array
           items: { $ref: "#/components/schemas/DocumentSummary" }
+        updates:
+          type: array
+          items: { $ref: "#/components/schemas/PortalUpdate" }
     PortalView:
       type: object
       required: [clientName, cases]

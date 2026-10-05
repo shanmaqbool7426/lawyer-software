@@ -143,6 +143,7 @@ const noteSchema = new Schema(
     caseId: { type: String, required: true, index: true },
     text: { type: String, required: true },
     author: { type: String, default: null },
+    clientVisible: { type: Boolean, default: false },
     createdAt: { type: Date, default: () => new Date() },
   },
   { versionKey: false },

@@ -1146,6 +1146,80 @@ export const useCreatePortalLink = <TError extends unknown = ErrorType<void>,
       return useMutation(getCreatePortalLinkMutationOptions(options));
     }
 
+export type PortalEmailInput = { email?: string };
+export type PortalEmailResult = { token: string; url: string; emailed: boolean; to?: string | null };
+
+export const getSendPortalEmailUrl = (id: string,) => {
+
+
+
+
+  return `/api/clients/${id}/portal/email`
+}
+
+/**
+ * @summary Email the client their portal link (creates one if none exists)
+ */
+export const sendPortalEmail = async (id: string,
+    portalEmailInput: PortalEmailInput, options?: Parameters<typeof customFetch>[1]): Promise<PortalEmailResult> => {
+
+  return customFetch<PortalEmailResult>(getSendPortalEmailUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(portalEmailInput)
+  }
+);}
+
+
+
+
+export const getSendPortalEmailMutationOptions = <TError extends unknown = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendPortalEmail>>, TError,{id: string;data: BodyType<PortalEmailInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendPortalEmail>>, TError,{id: string;data: BodyType<PortalEmailInput>}, TContext> => {
+
+const mutationKey = ['sendPortalEmail'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendPortalEmail>>, {id: string;data: BodyType<PortalEmailInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  sendPortalEmail(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendPortalEmailMutationResult = NonNullable<Awaited<ReturnType<typeof sendPortalEmail>>>
+    export type SendPortalEmailMutationBody = BodyType<PortalEmailInput>
+    export type SendPortalEmailMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Email the client their portal link (creates one if none exists)
+ */
+export const useSendPortalEmail = <TError extends unknown = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendPortalEmail>>, TError,{id: string;data: BodyType<PortalEmailInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendPortalEmail>>,
+        TError,
+        {id: string;data: BodyType<PortalEmailInput>},
+        TContext
+      > => {
+      return useMutation(getSendPortalEmailMutationOptions(options));
+    }
+
 export const getRevokePortalLinkUrl = (id: string,) => {
 
 
@@ -1736,7 +1810,7 @@ export const useCreateNote = <TError extends unknown = ErrorType<unknown>,
       return useMutation(getCreateNoteMutationOptions(options));
     }
 
-export type CaseNoteUpdate = { text?: string; author?: string | null };
+export type CaseNoteUpdate = { text?: string; author?: string | null; clientVisible?: boolean };
 export type PaymentVoidInput = { reason?: string };
 export type PaymentRefundInput = { amount?: number; date?: string; reason?: string };
 

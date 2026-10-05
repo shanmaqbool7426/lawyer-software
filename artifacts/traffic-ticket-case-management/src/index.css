@@ -613,3 +613,8 @@
 .nav-link.nav-soon { opacity: .45; cursor: not-allowed; user-select: none; }
 .nav-link.nav-soon:hover { color: hsl(var(--sidebar-foreground) / .72); background: transparent; transform: none; box-shadow: none; }
 .pill-soon { margin-left: auto; font: 700 8px var(--app-font-mono); letter-spacing: .08em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: hsl(var(--sidebar-accent)); color: hsl(var(--sidebar-foreground) / .5); white-space: nowrap; }
+
+/* ---- Client-visible notes & portal updates ---- */
+.check-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: hsl(var(--muted-foreground)); cursor: pointer; margin-top: 10px; }
+.check-row input[type="checkbox"] { width: 14px; height: 14px; accent-color: hsl(var(--accent)); cursor: pointer; }
+.pill-shared { background: hsl(var(--chart-2) / .14); color: hsl(var(--chart-2)); }

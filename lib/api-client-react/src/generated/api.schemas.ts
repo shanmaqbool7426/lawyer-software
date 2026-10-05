@@ -307,6 +307,7 @@ export interface Note {
   text: string;
   /** @nullable */
   author?: string | null;
+  clientVisible?: boolean;
   createdAt: string;
 }
 
@@ -314,6 +315,7 @@ export interface NoteInput {
   /** @minLength 1 */
   text: string;
   author?: string;
+  clientVisible?: boolean;
 }
 
 export interface CourtDate {
@@ -516,6 +518,13 @@ export interface PortalPayment {
   note?: string | null;
 }
 
+export interface PortalUpdate {
+  text: string;
+  /** @nullable */
+  author?: string | null;
+  createdAt: string;
+}
+
 export interface PortalCase {
   id: string;
   caseNumber: number;
@@ -530,6 +539,7 @@ export interface PortalCase {
   balanceOwing: number;
   courtDates: PortalCourtDate[];
   payments: PortalPayment[];
+  updates: PortalUpdate[];
   documents: DocumentSummary[];
 }
 
