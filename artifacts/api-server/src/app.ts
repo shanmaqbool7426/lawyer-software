@@ -77,10 +77,15 @@ app.get("/api/healthz", (_req, res) => {
 app.use("/api", publicRouter);
 
 app.use("/api", (req, res, next) => {
-  const auth = (req as {
-    auth?: { sessionClaims?: { userId?: string | null } | null; userId?: string | null } | null;
-  }).auth;
-  const userId = auth?.sessionClaims?.userId || auth?.userId;
+  // @clerk/express v2 exposes req.auth as an AuthFn (a function returning the
+  // AuthObject) — call it. The demo-mode fallback above sets a plain object,
+  // so handle both shapes.
+  const auth = (req as { auth?: unknown }).auth;
+  const authObj =
+    typeof auth === "function"
+      ? (auth as () => { sessionClaims?: { userId?: string | null } | null; userId?: string | null } | null)()
+      : (auth as { sessionClaims?: { userId?: string | null } | null; userId?: string | null } | null | undefined);
+  const userId = authObj?.sessionClaims?.userId || authObj?.userId;
   if (!userId) {
     res.status(401).json({ error: "Unauthorized" });
     return;

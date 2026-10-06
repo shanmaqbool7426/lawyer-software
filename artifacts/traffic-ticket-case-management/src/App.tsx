@@ -33,6 +33,7 @@ import {
   useRevokePortalLink, useSendPortalEmail, useRefundCasePayment, useUpdateCase, useUpdateCaseNote, useUpdateClient, useVoidCasePayment,
 } from '@workspace/api-client-react';
 import type { Case, CaseDetail, Client, Payment } from '@workspace/api-client-react';
+import { setAuthTokenGetter } from '@workspace/api-client-react';
 import { Link, Redirect, Route, Router as WouterRouter, Switch, useLocation, useParams } from 'wouter';
 
 const queryClient = new QueryClient();
@@ -2020,6 +2021,19 @@ function ProtectedRoutes() {
   return <Shell>{appRoutes}</Shell>;
 }
 
+// Attach the Clerk session JWT to every API request as a Bearer token. Without
+// this the SPA relies solely on same-origin __session cookies, which only exist
+// when Clerk's proxy is active — direct pk_test dev hits send no cookie, so the
+// API 401s every call. The getter returns null when signed out (no header).
+function AuthTokenBridge() {
+  const { getToken } = useAuth();
+  useEffect(() => {
+    setAuthTokenGetter(async () => (await getToken()) ?? null);
+    return () => { setAuthTokenGetter(null); };
+  }, [getToken]);
+  return null;
+}
+
 function Router() {
   return <Switch>
     <Route path="/login" component={() => <Redirect to="/sign-in" />} />
@@ -2043,7 +2057,7 @@ function App() {
   if (demoMode) {
     return <QueryClientProvider client={queryClient}><WouterRouter base={basePath}><RoutedErrorBoundary><Router /></RoutedErrorBoundary><Toaster /></WouterRouter></QueryClientProvider>;
   }
-  return <QueryClientProvider client={queryClient}><WouterRouter base={basePath}><ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={clerkAppearance} signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`}><RoutedErrorBoundary><Router /></RoutedErrorBoundary></ClerkProvider><Toaster /></WouterRouter></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><WouterRouter base={basePath}><ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={clerkAppearance} signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`}><AuthTokenBridge /><RoutedErrorBoundary><Router /></RoutedErrorBoundary></ClerkProvider><Toaster /></WouterRouter></QueryClientProvider>;
 }
 
 export default App;

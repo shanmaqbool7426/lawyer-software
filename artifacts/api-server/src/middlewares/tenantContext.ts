@@ -3,8 +3,20 @@ import { OrganizationModel } from "@workspace/db";
 import { getDefaultOrganization } from "../lib/tenancy";
 
 type AuthLike = {
-  auth?: { sessionClaims?: Record<string, unknown> | null } | null;
+  auth?: unknown;
 };
+
+// @clerk/express v2 exposes req.auth as an AuthFn (a function returning the
+// AuthObject) — call it. The demo-mode fallback in app.ts sets a plain object
+// instead, so handle both shapes.
+function resolveSessionClaims(req: Request): Record<string, unknown> {
+  const auth = (req as AuthLike).auth;
+  const obj =
+    typeof auth === "function"
+      ? (auth as () => { sessionClaims?: Record<string, unknown> | null } | null)()
+      : (auth as { sessionClaims?: Record<string, unknown> | null } | null | undefined);
+  return obj?.sessionClaims ?? {};
+}
 
 /**
  * Resolves the workspace (tenant) for the current request into
@@ -17,7 +29,7 @@ type AuthLike = {
  */
 export async function tenantContext(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const claims = (req as AuthLike).auth?.sessionClaims ?? {};
+    const claims = resolveSessionClaims(req);
     const claimOrgId =
       (claims as { orgId?: string | null }).orgId ??
       (claims as { o?: { id?: string | null } | null }).o?.id ??
