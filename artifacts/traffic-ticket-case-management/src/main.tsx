@@ -11,6 +11,8 @@ createRoot(document.getElementById('root')!, {
     console.error(error, errorInfo.componentStack);
   },
 }).render(
+  // App() owns Clerk provisioning (demo mode, keyed provider, or the
+  // missing-key error) — a provider here would nest a second ClerkProvider.
   <ErrorBoundary>
     <App />
   </ErrorBoundary>,

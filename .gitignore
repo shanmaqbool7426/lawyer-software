@@ -50,3 +50,9 @@ temp_interactive_push.bat
 # Vercel CLI temp
 .vercel-tmp/
 .vercel/
+
+# Local env files & Clerk accountless state (never commit keys)
+.env
+.env.local
+.env.*.local
+.clerk/

@@ -8,6 +8,7 @@
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/express" },
+    { "source": "/__clerk/(.*)", "destination": "/api/express" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

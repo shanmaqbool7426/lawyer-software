@@ -52,7 +52,9 @@ export function getClerkProxyHost(req: {
   return firstHop || req.headers.host?.trim() || undefined;
 }
 
-export function clerkProxyMiddleware(): RequestHandler {
+export function clerkProxyMiddleware(
+  mountPath: string = CLERK_PROXY_PATH,
+): RequestHandler {
   // Only run proxy in production — Clerk proxying doesn't work for dev instances
   if (process.env.NODE_ENV !== 'production') {
     return (_req, _res, next) => next();
@@ -70,12 +72,12 @@ export function clerkProxyMiddleware(): RequestHandler {
     // proxyRes); the deployment edge rejects chunked proxied responses.
     selfHandleResponse: true,
     pathRewrite: (path: string) =>
-      path.replace(new RegExp(`^${CLERK_PROXY_PATH}`), ''),
+      path.replace(new RegExp(`^${mountPath}`), ''),
     on: {
       proxyReq: (proxyReq, req) => {
         const protocol = req.headers['x-forwarded-proto'] || 'https';
         const host = getClerkProxyHost(req) || '';
-        const proxyUrl = `${protocol}://${host}${CLERK_PROXY_PATH}`;
+        const proxyUrl = `${protocol}://${host}${mountPath}`;
 
         proxyReq.setHeader('Clerk-Proxy-Url', proxyUrl);
         proxyReq.setHeader('Clerk-Secret-Key', secretKey);

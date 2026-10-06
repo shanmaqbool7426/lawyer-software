@@ -34,6 +34,10 @@ app.use(
   }),
 );
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+// Clerk production domains that cannot hold DNS records (vercel.app) configure
+// the proxy as https://<domain>/__clerk — no /api prefix. Serve the same
+// handler there so the Clerk-Proxy-Url header matches the dashboard value.
+app.use('/__clerk', clerkProxyMiddleware('/__clerk'));
 app.use(cors({ credentials: true, origin: true }));
 // 16 MB JSON limit so base64 document uploads fit under the MongoDB 16 MB doc cap
 app.use(express.json({ limit: "16mb" }));

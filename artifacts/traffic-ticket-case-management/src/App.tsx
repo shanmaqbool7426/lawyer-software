@@ -2015,8 +2015,9 @@ function ProtectedRoutes() {
 function Router() {
   return <Switch>
     <Route path="/login" component={() => <Redirect to="/sign-in" />} />
-    <Route path="/sign-in/*?" component={Login} />
-    <Route path="/sign-up/*?" component={SignUpPage} />
+    {/* Clerk components need ClerkProvider; in demo mode bounce to the dashboard */}
+    <Route path="/sign-in/*?" component={demoMode ? () => <Redirect to="/" /> : Login} />
+    <Route path="/sign-up/*?" component={demoMode ? () => <Redirect to="/" /> : SignUpPage} />
     {/* Public token-authenticated pages — no Clerk session needed */}
     <Route path="/portal/:token" component={PortalPage} />
     <Route path="/sign/:token" component={SignPage} />
