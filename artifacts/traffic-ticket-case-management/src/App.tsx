@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClerkProvider, RedirectToSignIn, SignIn, SignUp, useAuth, useClerk } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
-import { shadcn } from '@clerk/themes';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import {
@@ -59,7 +58,6 @@ const demoMode = !rawClerkPubKey && (import.meta.env.DEV || import.meta.env.VITE
 const statuses = ['Open', 'Disclosure Requested', 'Filed', 'Resummoned', 'Awaiting Trial', 'Withdrawn', 'Resolved', 'Closed'];
 const leadSources = ['Referral', 'Website', 'Google Search', 'Google Ads', 'Meta Ads', 'AI Assistant / Chatbot', 'Walk-in', 'Repeat Client', 'Other'];
 const clerkAppearance = {
-  theme: shadcn,
   cssLayerName: 'clerk',
   options: {
     logoPlacement: 'inside' as const,
@@ -96,12 +94,12 @@ const clerkAppearance = {
     logoBox: 'rounded-xl',
     logoImage: 'max-h-12',
     socialButtonsBlockButton: 'border-[#dfe3e5]',
-    formButtonPrimary: 'bg-[#1c2b3c] hover:bg-[#263c53]',
-    formFieldInput: 'border-[#dfe3e5]',
+    formButtonPrimary: '!bg-[#c95743] hover:!bg-[#b04836] !text-white',
+    formFieldInput: '!bg-white !border-[#dfe3e5] !text-[#1c2b3c]',
     footerAction: 'border-t border-[#dfe3e5]',
     dividerLine: 'bg-[#dfe3e5]',
     alert: 'border-[#b8403f]',
-    otpCodeFieldInput: 'border-[#dfe3e5]',
+    otpCodeFieldInput: '!bg-white !border-[#dfe3e5] !text-[#1c2b3c]',
     formFieldRow: 'gap-2',
     main: 'bg-transparent',
   },
