@@ -37,7 +37,11 @@ import { Link, Redirect, Route, Router as WouterRouter, Switch, useLocation, use
 
 const queryClient = new QueryClient();
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
-const rawClerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || undefined;
+// The production publishable key is public by design (it ships in every
+// visitor's bundle), so embedding it is safe. Env vars still win when set,
+// keeping localhost on the pk_test development key from .env.local.
+const PROD_CLERK_PUBLISHABLE_KEY = 'pk_live_Y2xlcmsubGF3eWVyLXNvZnR3YXJlLW5pbmUudmVyY2VsLmFwcCQ';
+const rawClerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || (import.meta.env.PROD ? PROD_CLERK_PUBLISHABLE_KEY : undefined);
 const clerkPubKey = (() => {
   try {
     return publishableKeyFromHost(window.location.hostname, rawClerkPubKey) || rawClerkPubKey;
@@ -45,7 +49,11 @@ const clerkPubKey = (() => {
     return rawClerkPubKey;
   }
 })();
-const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+// On vercel.app deployments Clerk runs through the app-origin proxy path
+// (vercel.app domains cannot hold DNS records), so derive it from the host —
+// no env var needed. Localhost dev uses pk_test against the real Frontend API
+// and needs no proxy.
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL || (import.meta.env.PROD ? `https://${window.location.host}/__clerk` : undefined);
 const demoMode = !rawClerkPubKey && (import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === '1');
 const statuses = ['Open', 'Disclosure Requested', 'Filed', 'Resummoned', 'Awaiting Trial', 'Withdrawn', 'Resolved', 'Closed'];
 const leadSources = ['Referral', 'Website', 'Google Search', 'Google Ads', 'Meta Ads', 'AI Assistant / Chatbot', 'Walk-in', 'Repeat Client', 'Other'];

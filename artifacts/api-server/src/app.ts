@@ -44,15 +44,19 @@ app.use(express.json({ limit: "16mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // DEMO_MODE=1 opts a public deployment into the local-demo auth bypass so the
-// app can run end-to-end without real Clerk credentials.
-const clerkEnabled = (!!process.env.CLERK_PUBLISHABLE_KEY || process.env.NODE_ENV === 'production') && process.env.DEMO_MODE !== '1';
+// app can run end-to-end without real Clerk credentials. The production
+// publishable key is public (it identifies the instance and is embedded in the
+// SPA bundle anyway), so a hardcoded fallback is safe; an env var still wins
+// for local dev with pk_test.
+const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || 'pk_live_Y2xlcmsubGF3eWVyLXNvZnR3YXJlLW5pbmUudmVyY2VsLmFwcCQ';
+const clerkEnabled = !!CLERK_PUBLISHABLE_KEY && process.env.DEMO_MODE !== '1';
 
 if (clerkEnabled) {
   app.use(
     clerkMiddleware((req) => ({
       publishableKey: publishableKeyFromHost(
         getClerkProxyHost(req) ?? "",
-        process.env.CLERK_PUBLISHABLE_KEY,
+        CLERK_PUBLISHABLE_KEY,
       ),
     })),
   );
