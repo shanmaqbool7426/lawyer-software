@@ -58,6 +58,9 @@ const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL || (import.meta.env.P
 // Seeded from the build, then corrected by /api/auth-mode before anything
 // renders: the API knows whether the deployment really runs without Clerk.
 let demoMode = !rawClerkPubKey && (import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === '1');
+// Also from /api/auth-mode: which env vars the deployment is missing, so the
+// boot problem screen can name the real cause instead of a generic timeout.
+let authMissingEnv: string[] = [];
 const statuses = ['Open', 'Disclosure Requested', 'Filed', 'Resummoned', 'Awaiting Trial', 'Withdrawn', 'Resolved', 'Closed'];
 const leadSources = ['Referral', 'Website', 'Google Search', 'Google Ads', 'Meta Ads', 'AI Assistant / Chatbot', 'Walk-in', 'Repeat Client', 'Other'];
 const clerkAppearance = {
@@ -2771,7 +2774,12 @@ function ClerkGate() {
         <div className="card" data-testid="state-auth-unavailable" style={{ padding: 30, maxWidth: 470 }}>
           <div className="eyebrow">Sign-in</div>
           <h1 className="page-title" style={{ fontSize: 24 }}>The sign-in service did not load</h1>
-          <p className="page-copy">This deployment is set to use Clerk, but the browser could not fetch it from this domain. Check that <code>CLERK_SECRET_KEY</code> is set and that <code>/__clerk</code> answers with JSON, then reload.</p>
+          <p className="page-copy">
+            This deployment is set to use Clerk, but the browser could not fetch it from this domain.{' '}
+            {authMissingEnv.length
+              ? `The server is missing ${authMissingEnv.join(' and ')}.`
+              : `Check that /__clerk answers with JSON.`}
+          </p>
           <button className="button button-primary" style={{ marginTop: 18 }} onClick={() => window.location.reload()}>Reload</button>
         </div>
       </div>
@@ -2822,13 +2830,16 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
 // never mounted, which is exactly the endless skeleton this screen replaced.
 function App() {
   const [authMode, setAuthMode] = useState<'checking' | 'demo' | 'clerk' | 'unreachable'>('checking');
+  const [authInfo, setAuthInfo] = useState<{ proxy?: boolean; missing?: string[] }>({});
 
   useEffect(() => {
     let cancelled = false;
     fetch(`${basePath}/api/auth-mode`, { headers: { accept: 'application/json' } })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((body: { demo?: boolean }) => {
-        if (!cancelled) setAuthMode(body.demo ? 'demo' : 'clerk');
+      .then((body: { demo?: boolean; proxy?: boolean; missing?: string[] }) => {
+        if (cancelled) return;
+        setAuthMode(body.demo ? 'demo' : 'clerk');
+        setAuthInfo({ proxy: body.proxy, missing: body.missing });
       })
       .catch(() => {
         // API unreachable: trust the build so a network blip does not turn a
@@ -2844,7 +2855,12 @@ function App() {
     ? { title: 'The workspace did not answer', copy: 'This page could not reach the API, so it cannot tell whether a login is required. Check the deployment, then reload.' }
     : authMode === 'clerk' && !clerkPubKey
       ? { title: 'Sign-in is not configured', copy: 'This build has no Clerk publishable key and the API expects a signed-in user. Set VITE_CLERK_PUBLISHABLE_KEY (pk_live) and redeploy.' }
-      : null;
+      : authMode === 'clerk' && authInfo.proxy === false
+        ? {
+            title: 'Sign-in is not configured',
+            copy: `The API is ready for Clerk, but ${authInfo.missing?.length ? authInfo.missing.join(' and ') : 'CLERK_SECRET_KEY'} is not set on this deployment, so the browser cannot load ClerkJS. Add it in Vercel for the Production environment, then redeploy.`,
+          }
+        : null;
   if (problem) {
     return (
       <div className="login-page">
@@ -2858,8 +2874,9 @@ function App() {
     );
   }
 
-  // Children read this flag while they render, so set it before returning.
+  // Children read these while they render, so set them before returning.
   demoMode = authMode === 'demo';
+  authMissingEnv = authInfo.missing ?? [];
 
   if (demoMode) {
     return <QueryClientProvider client={queryClient}><WouterRouter base={basePath}><RoutedErrorBoundary><Router /></RoutedErrorBoundary><Toaster /></WouterRouter></QueryClientProvider>;

@@ -76,7 +76,19 @@ app.get("/api/healthz", (_req, res) => {
 // Clerk-keyed bundle talking to a demo API used to wait on a proxy that was
 // never mounted, leaving the app on its loading skeleton forever.
 app.get("/api/auth-mode", (_req, res) => {
-  res.json({ demo: !clerkEnabled, clerk: clerkEnabled });
+  const hasSecret = !!process.env.CLERK_SECRET_KEY;
+  res.json({
+    demo: !clerkEnabled,
+    clerk: clerkEnabled,
+    // ClerkJS is fetched through /__clerk, which the proxy middleware can only
+    // serve when the secret key is present. Reporting it here lets the SPA say
+    // which variable is missing instead of spinning for twelve seconds.
+    proxy: hasSecret,
+    missing: [
+      ...(process.env.DEMO_MODE === "1" ? ["DEMO_MODE"] : []),
+      ...(!hasSecret ? ["CLERK_SECRET_KEY"] : []),
+    ],
+  });
 });
 
 // Public, token-authenticated endpoints: client portal, signature pages and
