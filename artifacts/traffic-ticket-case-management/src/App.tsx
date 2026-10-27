@@ -55,7 +55,9 @@ const clerkPubKey = (() => {
 // no env var needed. Localhost dev uses pk_test against the real Frontend API
 // and needs no proxy.
 const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL || (import.meta.env.PROD ? `https://${window.location.host}/__clerk` : undefined);
-const demoMode = !rawClerkPubKey && (import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === '1');
+// Seeded from the build, then corrected by /api/auth-mode before anything
+// renders: the API knows whether the deployment really runs without Clerk.
+let demoMode = !rawClerkPubKey && (import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === '1');
 const statuses = ['Open', 'Disclosure Requested', 'Filed', 'Resummoned', 'Awaiting Trial', 'Withdrawn', 'Resolved', 'Closed'];
 const leadSources = ['Referral', 'Website', 'Google Search', 'Google Ads', 'Meta Ads', 'AI Assistant / Chatbot', 'Walk-in', 'Repeat Client', 'Other'];
 const clerkAppearance = {
@@ -2748,12 +2750,40 @@ const appRoutes = (
   <Switch><Route path="/" component={Dashboard} /><Route path="/cases/new" component={NewCase} /><Route path="/cases/:id" component={CaseDetailPage} /><Route path="/cases" component={Cases} /><Route path="/clients/:id" component={ClientDetailPage} /><Route path="/clients" component={Clients} /><Route path="/reports" component={Reports} /><Route path="/invoices/new" component={NewInvoicePage} /><Route path="/invoices/:id/edit" component={EditInvoicePage} /><Route path="/invoices/:id" component={InvoiceDetailPage} /><Route path="/invoices" component={InvoicesPage} /><Route path="/expenses" component={ExpensesPage} /><Route path="/appointments" component={AppointmentsPage} /><Route path="/conflict-check" component={ConflictCheckerPage} /><Route path="/import" component={ImportPage} /><Route path="/team" component={TeamPage} /><Route component={() => <EmptyState title="Page not found" copy="That docket page does not exist." action={<Link href="/" className="button button-primary" data-testid="link-not-found-home">Back to overview</Link>} />} /></Switch>
 );
 
-function ProtectedRoutes() {
-  if (demoMode) return <Shell>{appRoutes}</Shell>;
+// Clerk can fail to load for good reasons (secret not deployed, proxy off).
+// Without a deadline the app sits on skeletons with no explanation, so give
+// the failure a name and a way out instead of spinning forever.
+function ClerkGate() {
   const { isLoaded, isSignedIn } = useAuth();
-  if (!isLoaded) return <div className="login-page"><LoadingState rows={4} /></div>;
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (isLoaded) {
+      setStalled(false);
+      return;
+    }
+    const timer = setTimeout(() => setStalled(true), 12000);
+    return () => clearTimeout(timer);
+  }, [isLoaded]);
+  if (!isLoaded) {
+    if (!stalled) return <div className="login-page"><LoadingState rows={4} /></div>;
+    return (
+      <div className="login-page">
+        <div className="card" data-testid="state-auth-unavailable" style={{ padding: 30, maxWidth: 470 }}>
+          <div className="eyebrow">Sign-in</div>
+          <h1 className="page-title" style={{ fontSize: 24 }}>The sign-in service did not load</h1>
+          <p className="page-copy">This deployment is set to use Clerk, but the browser could not fetch it from this domain. Check that <code>CLERK_SECRET_KEY</code> is set and that <code>/__clerk</code> answers with JSON, then reload.</p>
+          <button className="button button-primary" style={{ marginTop: 18 }} onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      </div>
+    );
+  }
   if (!isSignedIn) return <RedirectToSignIn redirectUrl={basePath || '/'} />;
   return <Shell>{appRoutes}</Shell>;
+}
+
+function ProtectedRoutes() {
+  if (demoMode) return <Shell>{appRoutes}</Shell>;
+  return <ClerkGate />;
 }
 
 // Attach the Clerk session JWT to every API request as a Bearer token. Without
@@ -2787,8 +2817,50 @@ function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+// The server, not the bundle, decides whether this deployment asks for a
+// login. A Clerk build talking to a demo API used to wait for a proxy that was
+// never mounted, which is exactly the endless skeleton this screen replaced.
 function App() {
-  if (!clerkPubKey && !demoMode) throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY in environment.');
+  const [authMode, setAuthMode] = useState<'checking' | 'demo' | 'clerk' | 'unreachable'>('checking');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${basePath}/api/auth-mode`, { headers: { accept: 'application/json' } })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((body: { demo?: boolean }) => {
+        if (!cancelled) setAuthMode(body.demo ? 'demo' : 'clerk');
+      })
+      .catch(() => {
+        // API unreachable: trust the build so a network blip does not turn a
+        // working Clerk deployment into an error page.
+        if (!cancelled) setAuthMode(rawClerkPubKey ? 'clerk' : import.meta.env.DEV ? 'demo' : 'unreachable');
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (authMode === 'checking') return <div className="login-page"><LoadingState rows={4} /></div>;
+
+  const problem = authMode === 'unreachable'
+    ? { title: 'The workspace did not answer', copy: 'This page could not reach the API, so it cannot tell whether a login is required. Check the deployment, then reload.' }
+    : authMode === 'clerk' && !clerkPubKey
+      ? { title: 'Sign-in is not configured', copy: 'This build has no Clerk publishable key and the API expects a signed-in user. Set VITE_CLERK_PUBLISHABLE_KEY (pk_live) and redeploy.' }
+      : null;
+  if (problem) {
+    return (
+      <div className="login-page">
+        <div className="card" data-testid="state-boot-problem" style={{ padding: 30, maxWidth: 470 }}>
+          <div className="eyebrow">Connection</div>
+          <h1 className="page-title" style={{ fontSize: 24 }}>{problem.title}</h1>
+          <p className="page-copy">{problem.copy}</p>
+          <button className="button button-primary" style={{ marginTop: 18 }} onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Children read this flag while they render, so set it before returning.
+  demoMode = authMode === 'demo';
+
   if (demoMode) {
     return <QueryClientProvider client={queryClient}><WouterRouter base={basePath}><RoutedErrorBoundary><Router /></RoutedErrorBoundary><Toaster /></WouterRouter></QueryClientProvider>;
   }

@@ -71,6 +71,14 @@ app.get("/api/healthz", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+// Which auth mode this deployment runs in. DEMO_MODE is a server decision, but
+// the SPA is built ahead of time and would otherwise assume Clerk always: a
+// Clerk-keyed bundle talking to a demo API used to wait on a proxy that was
+// never mounted, leaving the app on its loading skeleton forever.
+app.get("/api/auth-mode", (_req, res) => {
+  res.json({ demo: !clerkEnabled, clerk: clerkEnabled });
+});
+
 // Public, token-authenticated endpoints: client portal, signature pages and
 // the subscribable calendar feed. Mounted before the auth guard so clients
 // can open these links without a session.

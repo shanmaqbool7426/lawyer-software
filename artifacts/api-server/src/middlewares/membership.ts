@@ -54,7 +54,10 @@ export async function membership(req: Request, res: Response, next: NextFunction
     let member = await MemberModel.findOne({ tenantId, clerkUserId: userId }).lean<MemberRecord>();
 
     if (!member) {
-      const claimed = await MemberModel.exists({ tenantId, role: "owner" });
+      // A demo deployment created its owner with the synthetic id "local-demo".
+      // That row must not make the workspace look claimed once real Clerk auth
+      // is switched on, or the actual owner would be locked out.
+      const claimed = await MemberModel.exists({ tenantId, role: "owner", clerkUserId: { $ne: "local-demo" } });
       if (claimed) {
         res.status(403).json({
           error: "This account has not been added to the workspace. Ask the owner to add you.",
@@ -62,6 +65,8 @@ export async function membership(req: Request, res: Response, next: NextFunction
         });
         return;
       }
+
+      await MemberModel.deleteMany({ tenantId, clerkUserId: "local-demo" });
 
       let name = "Workspace owner";
       let email: string | null = null;
