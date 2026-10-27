@@ -113,6 +113,59 @@ export async function sendEmail(payload: {
   }
 }
 
+/** Brand the invoice email. Inline styles only — email clients ignore <style> blocks. */
+export function invoiceEmailHtml(payload: {
+  clientName: string;
+  invoiceNumber: string;
+  total: number;
+  issueDate: string;
+  dueDate: string;
+  items: Array<{ description: string; quantity: number; amount: number }>;
+  portalUrl?: string | null;
+}): string {
+  const escape = (v: string) => v.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c] as string));
+  const money = (v: number) => `$${v.toFixed(2)} CAD`;
+  const rows = payload.items
+    .map(
+      (item) => `<tr>
+        <td style="padding:8px 0;border-bottom:1px solid #eef1f5;font-size:13px;">${escape(item.description)}${item.quantity !== 1 ? ` <span style="color:#8593a3;">× ${item.quantity}</span>` : ""}</td>
+        <td style="padding:8px 0;border-bottom:1px solid #eef1f5;font-size:13px;text-align:right;white-space:nowrap;">${money(item.amount)}</td>
+      </tr>`,
+    )
+    .join("");
+  const portalBlock = payload.portalUrl
+    ? `<div style="text-align:center;margin:24px 0;">
+        <a href="${escape(payload.portalUrl)}" style="background:#1f6feb;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 26px;border-radius:8px;display:inline-block;">View my case portal</a>
+      </div>`
+    : "";
+  return `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f1f3f6;">
+  <div style="max-width:560px;margin:0 auto;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;color:#1d2733;">
+    <div style="background:#101826;color:#ffffff;padding:18px 22px;border-radius:10px 10px 0 0;">
+      <span style="font-size:15px;font-weight:700;letter-spacing:.04em;">Docketline</span>
+      <span style="font-size:11px;color:#9fb0c3;margin-left:10px;">Ontario traffic law</span>
+    </div>
+    <div style="background:#ffffff;padding:26px 22px;border:1px solid #e2e7ee;border-top:none;border-radius:0 0 10px 10px;">
+      <p style="margin:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8593a3;">Invoice ${escape(payload.invoiceNumber)}</p>
+      <p style="margin:0 0 18px;font-size:14px;line-height:1.55;">Hello ${escape(payload.clientName)},</p>
+      <p style="margin:0 0 18px;font-size:14px;line-height:1.55;">Please find your invoice below. The amount due is <strong>${money(payload.total)}</strong>${payload.dueDate ? `, payable by ${escape(payload.dueDate)}` : ""}.</p>
+      <table style="width:100%;border-collapse:collapse;margin:0 0 6px;">
+        ${rows}
+        <tr>
+          <td style="padding:12px 0 0;font-size:14px;font-weight:700;">Total due</td>
+          <td style="padding:12px 0 0;font-size:14px;font-weight:700;text-align:right;">${money(payload.total)}</td>
+        </tr>
+      </table>
+      <p style="margin:14px 0 0;font-size:11px;color:#8593a3;">Issued ${escape(payload.issueDate)} · Due ${escape(payload.dueDate)}</p>
+      ${portalBlock}
+      <p style="margin:18px 0 0;font-size:12px;color:#5b6b7c;line-height:1.6;">Questions about this invoice? Simply reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 /** Brand the portal-link email. Inline styles only — email clients ignore <style> blocks. */
 export function portalLinkEmailHtml(clientName: string, url: string): string {
   const safeName = clientName.replace(/[<>&]/g, "");

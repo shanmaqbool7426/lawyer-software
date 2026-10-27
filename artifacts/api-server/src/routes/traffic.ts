@@ -84,10 +84,12 @@ import {
   SignSignatureRequestBody,
 } from "@workspace/api-zod";
 import {
+  AppointmentModel,
   ClientModel,
   CaseModel,
   CourtDateModel,
   DocumentModel,
+  InvoiceModel,
   NoteModel,
   OrganizationModel,
   PaymentModel,
@@ -97,17 +99,21 @@ import {
 import {
   addNote,
   buildWorkspaceCalendar,
+  caseTotals,
   CASE_STATUSES,
   CLOSED_STATUSES,
   createAuditNote,
   getCaseDetail,
   getCaseRows,
   getNextCaseNumber,
+  getNextReceiptNumber,
   getNotificationFeed,
   toCase,
 } from "../lib/traffic";
 import { getDefaultOrganization, randomToken } from "../lib/tenancy";
+import { firmDay, utcDayStart } from "../lib/firmTime";
 import { isEmailConfigured, portalLinkEmailHtml, sendEmail } from "../lib/email";
+import { mirrorCourtDate, removeCourtMirror, refreshCourtMirrorForCase, removeCourtMirrorsForCase } from "../lib/courtSchedule";
 
 const router: IRouter = Router();
 // Token-authenticated routes mounted without the Clerk/userId guard.
@@ -123,6 +129,19 @@ function normalizeDate(value: string | undefined): string | null {
   if (!value) return null;
   const cleaned = value.trim();
   if (!cleaned) return null;
+  // Legacy sheets are Canadian, so "04/03/2026" is 4 March, not 3 April. Handing
+  // that to the Date parser reads it month-first and shifts a whole book.
+  const dayFirst = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dayFirst) {
+    const day = Number(dayFirst[1]);
+    const month = Number(dayFirst[2]);
+    const year = Number(dayFirst[3]);
+    const asUtc = new Date(Date.UTC(year, month - 1, day));
+    const valid =
+      asUtc.getUTCFullYear() === year && asUtc.getUTCMonth() === month - 1 && asUtc.getUTCDate() === day;
+    if (!valid) return null;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
   const parsed = new Date(cleaned);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString().slice(0, 10);
@@ -195,6 +214,8 @@ function plainClient(client: {
   leadSourceChannel: string;
   leadSourceDetail?: string | null;
   portalToken?: string | null;
+  conflictCheckedAt?: Date | null;
+  conflictCheckedBy?: string | null;
   createdAt: Date;
 }) {
   return {
@@ -205,6 +226,8 @@ function plainClient(client: {
     leadSourceChannel: client.leadSourceChannel,
     leadSourceDetail: client.leadSourceDetail,
     portalToken: client.portalToken ?? null,
+    conflictCheckedAt: client.conflictCheckedAt ?? null,
+    conflictCheckedBy: client.conflictCheckedBy ?? null,
     createdAt: client.createdAt,
   };
 }
@@ -634,6 +657,11 @@ router.patch("/cases/:id", async (req, res): Promise<void> => {
   if (data.status && data.status !== existing.status) {
     await createAuditNote(tenantId, existing.id, `Status changed from ${existing.status} to ${data.status}`);
   }
+  // The mirror's title and location are read from the case, so a changed court
+  // or room has to flow back into the calendar row.
+  if (data.courtLocation !== undefined || data.courtRoomNumber !== undefined) {
+    await refreshCourtMirrorForCase(tenantId, updated.id);
+  }
   const detail = await getCaseDetail(tenantId, updated.id);
   res.json(UpdateCaseResponse.parse(detail));
 });
@@ -654,6 +682,8 @@ router.delete("/cases/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Case not found" });
     return;
   }
+  // A deleted matter must not leave court rows behind on the schedule.
+  await removeCourtMirrorsForCase(tenantId, updated.id);
   res.sendStatus(204);
 });
 
@@ -675,16 +705,31 @@ router.post("/cases/:id/payments", async (req, res): Promise<void> => {
     return;
   }
   const data = parsed.data as any;
+  // The money has to be traceable: a ledger row without a method cannot be
+  // reconciled against the bank, and one without a name cannot be defended.
+  const method = String(data.method ?? "").trim();
+  const receivedBy = String(data.receivedBy ?? "").trim();
+  if (!method) {
+    res.status(422).json({ error: "Record how the money arrived — cash, cheque, e-transfer, card." });
+    return;
+  }
+  if (!receivedBy) {
+    res.status(422).json({ error: "Record who received the money." });
+    return;
+  }
+  const paymentDate = data.date instanceof Date ? data.date.toISOString().slice(0, 10) : data.date;
+  const receiptNumber = await getNextReceiptNumber(tenantId, paymentDate);
   const payment = await PaymentModel.create({
     id:             randomUUID(),
     tenantId,
     caseId:         params.data.id,
     amount:         data.amount,
-    date:           data.date instanceof Date ? data.date.toISOString().slice(0, 10) : data.date,
-    method:         data.method         || null,
+    date:           paymentDate,
+    receiptNumber,
+    method,
     reference:      data.reference      || null,
     allocationType: data.allocationType || "General",
-    receivedBy:     data.receivedBy     || null,
+    receivedBy,
     note:           data.note           || null,
     isVoided:       false,
     isRefund:       false,
@@ -695,6 +740,7 @@ router.post("/cases/:id/payments", async (req, res): Promise<void> => {
     caseId:         obj.caseId,
     amount:         Number(obj.amount),
     date:           obj.date,
+    receiptNumber:  obj.receiptNumber ?? null,
     method:         obj.method         ?? null,
     reference:      obj.reference      ?? null,
     allocationType: obj.allocationType ?? "General",
@@ -713,7 +759,7 @@ router.post("/cases/:id/payments", async (req, res): Promise<void> => {
 router.patch("/cases/:id/payments/:paymentId/void", async (req, res): Promise<void> => {
   const tenantId = tenantOf(res);
   const { id: caseId, paymentId } = req.params;
-  const { reason } = req.body as { reason?: string };
+  const { reason } = (req.body ?? {}) as { reason?: string };
 
   const payment = await PaymentModel.findOne({ id: paymentId, caseId, tenantId }).lean();
   if (!payment) { res.status(404).json({ error: "Payment not found" }); return; }
@@ -737,7 +783,7 @@ router.patch("/cases/:id/payments/:paymentId/void", async (req, res): Promise<vo
 router.post("/cases/:id/payments/:paymentId/refund", async (req, res): Promise<void> => {
   const tenantId = tenantOf(res);
   const { id: caseId, paymentId } = req.params;
-  const { amount: rawAmount, date: rawDate, reason } = req.body as { amount?: number; date?: string; reason?: string };
+  const { amount: rawAmount, date: rawDate, reason } = (req.body ?? {}) as { amount?: number; date?: string; reason?: string };
 
   const originalPayment = await PaymentModel.findOne({ id: paymentId, caseId, tenantId }).lean();
   if (!originalPayment) { res.status(404).json({ error: "Original payment not found" }); return; }
@@ -926,6 +972,9 @@ router.post("/cases/:id/court-dates", async (req, res): Promise<void> => {
     notes: data.notes || null,
   });
   await CaseModel.updateOne({ id: params.data.id, tenantId }, { $set: { updatedAt: new Date() } });
+  // Court dates are scheduled from the same calendar as everything else: keep
+  // an all-day appointment in step with the case file.
+  await mirrorCourtDate(tenantId, courtDate.id);
   res.status(201).json(
     CreateCourtDateResponse.parse({
       id: courtDate.id,
@@ -958,6 +1007,7 @@ router.delete("/cases/:id/court-dates/:courtDateId", async (req, res): Promise<v
     return;
   }
   await CaseModel.updateOne({ id: parsed.data.id, tenantId }, { $set: { updatedAt: new Date() } });
+  await removeCourtMirror(tenantId, removed.id);
   res.sendStatus(204);
 });
 
@@ -1133,7 +1183,9 @@ router.post("/imports/commit", async (req, res): Promise<void> => {
     ]);
     if (!name) continue;
 
-    const existing = await ClientModel.findOne({ tenantId, fullName: name }).lean();
+    // A legacy sheet often names people the firm deleted years ago. Matching one of
+    // those would hang a live case on an invisible client, so only live clients count.
+    const existing = await ClientModel.findOne({ tenantId, fullName: name, isDeleted: { $ne: true } }).lean();
     const client =
       existing ??
       (await ClientModel.create({
@@ -1160,15 +1212,6 @@ router.post("/imports/commit", async (req, res): Promise<void> => {
       status = inferredStatus;
     }
 
-    const intakeDate =
-      normalizeDate(
-        getColumn(row, mapping, "intakeDate", [
-          "intakeDate",
-          "intake_date",
-          "Intake Date",
-          "intake date",
-        ]),
-      ) ?? today();
     const offenceDate =
       normalizeDate(
         getColumn(row, mapping, "offenceDate", [
@@ -1178,6 +1221,18 @@ router.post("/imports/commit", async (req, res): Promise<void> => {
           "offence date",
         ]),
       ) ?? today();
+    // A legacy row often has no intake date. The offence date is a far better
+    // anchor than today, which would make an old file look newly opened and
+    // drop it into the wrong reporting period.
+    const intakeDate =
+      normalizeDate(
+        getColumn(row, mapping, "intakeDate", [
+          "intakeDate",
+          "intake_date",
+          "Intake Date",
+          "intake date",
+        ]),
+      ) ?? offenceDate;
 
     const totalFee =
       parseMoney(
@@ -1242,7 +1297,10 @@ router.post("/imports/commit", async (req, res): Promise<void> => {
         caseId: newCase.id,
         amount: payment.amount,
         date: intakeDate,
-        method: null,
+        // The sheet rarely says how the money came in, so the method names the
+        // truth (an import) instead of inventing one.
+        receiptNumber: await getNextReceiptNumber(tenantId, intakeDate),
+        method: "Legacy import",
         note: payment.note,
       });
     }
@@ -1712,12 +1770,16 @@ publicRouter.get("/portal/:token", async (req, res): Promise<void> => {
     return;
   }
   const tenantId = client.tenantId;
+  // The office day, not the server's — "next appearance" must not slip a day
+  // when the API happens to run in UTC.
+  const firmsToday = firmDay(new Date());
   const cases = await CaseModel.find({ tenantId, clientId: client.id, isDeleted: false })
     .sort({ caseNumber: 1 })
     .lean();
   const caseIds = cases.map((caseItem) => caseItem.id);
+  const caseById = new Map(cases.map((caseItem) => [caseItem.id, caseItem]));
   // An empty $in matches nothing, so no branching is needed for new clients.
-  const [courtDates, payments, documents, clientNotes] = await Promise.all([
+  const [courtDates, payments, documents, clientNotes, invoices, appointments, organization] = await Promise.all([
     CourtDateModel.find({ tenantId, caseId: { $in: caseIds } }).sort({ date: -1 }).lean(),
     PaymentModel.find({ tenantId, caseId: { $in: caseIds } }).sort({ date: -1 }).lean(),
     DocumentModel.find({ tenantId, caseId: { $in: caseIds } })
@@ -1727,14 +1789,117 @@ publicRouter.get("/portal/:token", async (req, res): Promise<void> => {
     NoteModel.find({ tenantId, caseId: { $in: caseIds }, clientVisible: true })
       .sort({ createdAt: -1 })
       .lean(),
+    // Drafts and voids are the firm's working paper. A client sees the invoices
+    // that were actually issued to them, and whether they have been paid.
+    InvoiceModel.find({ tenantId, clientId: client.id, isDeleted: false, status: { $in: ["sent", "paid"] } })
+      .sort({ issueDate: -1, invoiceNumber: -1 })
+      .lean(),
+    // Only what is still ahead: a client needs the next call or appearance, not
+    // last month's diary. Court dates are mirrored here, carrying their venue.
+    AppointmentModel.find({
+      tenantId,
+      isDeleted: { $ne: true },
+      status: { $ne: "cancelled" },
+      startAt: { $gte: utcDayStart(firmsToday) },
+      $or: [{ clientId: client.id }, { caseId: { $in: caseIds } }],
+    })
+      .sort({ startAt: 1 })
+      .limit(40)
+      .lean(),
+    OrganizationModel.findOne({ id: tenantId }).select("name").lean(),
   ]);
+
+  // One diary for the whole portal: court dates and booked appointments in the
+  // order they will actually happen, so "what is next" is never a guess.
+  const agenda = [
+    ...courtDates
+      .filter((courtDate) => courtDate.date >= firmsToday && caseById.has(courtDate.caseId))
+      .map((courtDate) => {
+        const caseItem = caseById.get(courtDate.caseId)!;
+        return {
+          id: `court-${courtDate.id}`,
+          kind: "court" as const,
+          date: courtDate.date,
+          startAt: null as Date | null,
+          title: caseItem.hearingType ?? "Court appearance",
+          type: "Court Appearance",
+          location: caseItem.courtLocation ?? null,
+          caseId: courtDate.caseId,
+          caseNumber: caseItem.caseNumber,
+        };
+      }),
+    ...appointments
+      .filter((appointment) => !appointment.courtDateId)
+      .map((appointment) => ({
+        id: appointment.id,
+        kind: "appointment" as const,
+        date: firmDay(new Date(appointment.startAt)),
+        startAt: appointment.startAt as Date | null,
+        title: appointment.title,
+        type: appointment.type,
+        location: appointment.location ?? null,
+        caseId: appointment.caseId ?? null,
+        caseNumber: appointment.caseId ? caseById.get(appointment.caseId)?.caseNumber ?? null : null,
+      })),
+  ]
+    .filter((item) => item.date >= firmsToday)
+    .sort((a, b) =>
+      a.date === b.date
+        ? (a.startAt?.getTime() ?? 0) - (b.startAt?.getTime() ?? 0)
+        : a.date.localeCompare(b.date),
+    )
+    .slice(0, 12);
+
+  // Every figure here comes from the same netting the firm's own screens use.
+  const summary = cases.reduce(
+    (acc, caseItem) => {
+      const totals = caseTotals(caseItem, payments.filter((payment) => payment.caseId === caseItem.id) as any);
+      acc.totalOwed += totals.totalOwed;
+      acc.amountReceived += totals.amountReceived;
+      acc.balanceOwing += totals.balanceOwing;
+      acc.creditBalance += totals.creditBalance;
+      return acc;
+    },
+    { files: cases.length, totalOwed: 0, amountReceived: 0, balanceOwing: 0, creditBalance: 0 },
+  );
 
   res.json(
     GetPortalViewResponse.parse({
       clientName: client.fullName,
+      // The details the office holds, so the client can spot an old phone
+      // number before a court date is missed over it.
+      clientEmail: client.email ?? null,
+      clientPhone: client.phone ?? null,
+      firmName: organization?.name ?? null,
+      generatedAt: new Date(),
+      today: firmsToday,
+      summary,
+      agenda,
+      invoices: invoices
+        .filter((invoice) => !invoice.caseId || caseById.has(invoice.caseId))
+        .map((invoice) => ({
+          id: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          caseId: invoice.caseId ?? null,
+          caseNumber: invoice.caseId ? caseById.get(invoice.caseId)?.caseNumber ?? null : null,
+          status: invoice.status,
+          issueDate: invoice.issueDate,
+          dueDate: invoice.dueDate,
+          total: Number(invoice.total),
+          paidAt: invoice.paidAt ?? null,
+          items: (invoice.items ?? []).map((item) => ({
+            description: item.description,
+            quantity: Number(item.quantity),
+            unitPrice: Number(item.unitPrice),
+            amount: Number(item.amount),
+          })),
+        })),
       cases: cases.map((caseItem) => {
         const casePayments = payments.filter((payment) => payment.caseId === caseItem.id);
-        const amountReceived = casePayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+        // Same netting as the firm's screens (fee + disbursements, voids dropped,
+        // refunds subtracted). A client must never see a different number from
+        // the one on their file.
+        const totals = caseTotals(caseItem, casePayments as any);
         return {
           id: caseItem.id,
           caseNumber: caseItem.caseNumber,
@@ -1742,21 +1907,50 @@ publicRouter.get("/portal/:token", async (req, res): Promise<void> => {
           ticketNumber: caseItem.ticketNumber ?? null,
           offenceDescription: caseItem.offenceDescription ?? null,
           offenceDate: caseItem.offenceDate,
+          // Where and by whom the charge was laid: what a client is asked about
+          // at the counter, and what they need to find their own paperwork.
+          offenceLocation: caseItem.offenceLocation ?? null,
+          citationIssuingAgency: caseItem.citationIssuingAgency ?? null,
+          officerName: caseItem.officerName ?? null,
           totalFee: Number(caseItem.totalFee),
-          amountReceived,
-          balanceOwing: Math.max(Number(caseItem.totalFee) - amountReceived, 0),
+          totalOwed: totals.totalOwed,
+          amountReceived: totals.amountReceived,
+          balanceOwing: totals.balanceOwing,
+          creditBalance: totals.creditBalance,
+          // The facts a client is asked about (venue, court file, who is
+          // handling the matter) plus the outcome once the file is decided.
+          intakeDate: caseItem.intakeDate ?? null,
+          responseDeadline: caseItem.responseDeadline ?? null,
+          courtLocation: caseItem.courtLocation ?? null,
+          courtRoomNumber: caseItem.courtRoomNumber ?? null,
+          courtFileNumber: caseItem.courtFileNumber ?? null,
+          hearingType: caseItem.hearingType ?? null,
+          assignedTo: caseItem.assignedTo ?? null,
+          closedDate: caseItem.closedDate ?? null,
+          outcome: caseItem.outcome ?? null,
+          reducedCharge: caseItem.reducedCharge ?? null,
+          courtFineAmount: caseItem.courtFineAmount ?? null,
+          demeritPoints: caseItem.demeritPoints ?? null,
+          licenceSuspended: caseItem.licenceSuspended ?? null,
+          suspensionDays: caseItem.suspensionDays ?? null,
           courtDates: courtDates
             .filter((courtDate) => courtDate.caseId === caseItem.id)
             .map((courtDate) => ({ date: courtDate.date, outcome: courtDate.outcome ?? null })),
           updates: clientNotes
             .filter((note) => note.caseId === caseItem.id)
             .map((note) => ({ text: note.text, author: note.author ?? null, createdAt: note.createdAt })),
-          payments: casePayments.map((payment) => ({
-            amount: Number(payment.amount),
-            date: payment.date,
-            method: payment.method ?? null,
-            note: payment.note ?? null,
-          })),
+          // Voided rows are internal: the client sees the receipt that stands,
+          // and a refund appears as the credit it is rather than as income.
+          payments: casePayments
+            .filter((payment) => !payment.isVoided)
+            .map((payment) => ({
+              receiptNumber: payment.receiptNumber ?? null,
+              amount: Number(payment.amount),
+              date: payment.date,
+              method: payment.method ?? null,
+              note: payment.note ?? null,
+              isRefund: Boolean(payment.isRefund),
+            })),
           documents: documents
             .filter((doc) => doc.caseId === caseItem.id)
             .map((doc) => ({

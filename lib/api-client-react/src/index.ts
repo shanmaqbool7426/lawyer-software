@@ -4,5 +4,8 @@ export * from "./generated/api.invoices";
 export * from "./generated/api.expenses";
 export * from "./generated/api.appointments";
 export * from "./generated/api.conflict-checker";
+export * from "./generated/api.reports";
+export * from "./generated/api.integrations";
+export * from "./generated/api.team";
 export { setBaseUrl, setAuthTokenGetter, setWorkspaceId } from "./custom-fetch";
 export type { AuthTokenGetter } from "./custom-fetch";

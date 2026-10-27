@@ -112,6 +112,13 @@ router.get("/expenses", async (req, res): Promise<void> => {
   const page  = Math.max(1, Math.floor(rawPage  ?? 1));
   const limit = Math.min(100, Math.max(1, Math.floor(rawLimit ?? 20)));
 
+  // These two filters describe opposite scopes — silently preferring one would
+  // hide rows the caller asked for, so reject the combination outright.
+  if (firmOnly === true && caseId) {
+    res.status(400).json({ error: "firmOnly and caseId cannot be combined" });
+    return;
+  }
+
   const query: Record<string, unknown> = { tenantId, isDeleted: { $ne: true } };
 
   if (caseId)    query.caseId = caseId;
@@ -119,7 +126,6 @@ router.get("/expenses", async (req, res): Promise<void> => {
   if (category)  query.category = category;
   // firmOnly: only expenses with NO case attached
   if (firmOnly === true)  query.caseId = null;
-  // If both caseId and firmOnly supplied, caseId wins (edge case guard)
   if (billable !== undefined) query.isBillable = billable;
   if (billed   !== undefined) query.isBilled   = billed;
   if (dateFrom || dateTo) {
@@ -198,7 +204,9 @@ router.post("/expenses", async (req, res): Promise<void> => {
     vendor:      data.vendor?.trim()     || null,
     receiptUrl:  data.receiptUrl?.trim() || null,
     isBillable:  data.isBillable ?? false,
-    isBilled:    false,
+    // Honoured on create so back-filling already-invoiced costs doesn't leave
+    // the register permanently "unbilled". Guarded against non-billable rows.
+    isBilled:    (data.isBillable ?? false) ? (data.isBilled ?? false) : false,
   });
 
   const { enriched } = await enrichExpenses(tenantId, [expense.toObject() as any]);
@@ -244,7 +252,9 @@ router.get("/expenses/summary", async (req, res): Promise<void> => {
       { $group: { _id: "$category", amount: { $sum: "$amount" }, count: { $sum: 1 } } },
       { $sort: { amount: -1 } },
     ]),
-    // By month (last 12)
+    // By month — the twelve most recent months, oldest first for a left-to-right
+    // trend. Sorting ascending with a limit would pin the chart to the oldest
+    // twelve months forever and hide current spending entirely.
     ExpenseModel.aggregate([
       { $match: baseMatch },
       {
@@ -254,8 +264,9 @@ router.get("/expenses/summary", async (req, res): Promise<void> => {
           count:  { $sum: 1 },
         },
       },
-      { $sort: { _id: 1 } },
+      { $sort: { _id: -1 } },
       { $limit: 12 },
+      { $sort: { _id: 1 } },
     ]),
     // Top vendors (non-null)
     ExpenseModel.aggregate([
@@ -305,6 +316,10 @@ router.get("/expenses/export.csv", async (req, res): Promise<void> => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
   const { caseId, clientId, category, firmOnly, billable, billed, dateFrom, dateTo, search } = parsed.data;
+  if (firmOnly === true && caseId) {
+    res.status(400).json({ error: "firmOnly and caseId cannot be combined" });
+    return;
+  }
   const query: Record<string, unknown> = { tenantId, isDeleted: { $ne: true } };
   if (caseId)    query.caseId   = caseId;
   if (clientId)  query.clientId = clientId;
@@ -396,12 +411,10 @@ router.patch("/expenses/:id", async (req, res): Promise<void> => {
   }
 
   // Guard: cannot mark as billed if not billable
-  if (data.isBilled === true) {
-    const effectiveBillable = data.isBillable ?? existing.isBillable;
-    if (!effectiveBillable) {
-      res.status(422).json({ error: "Cannot mark as billed — expense is not billable" });
-      return;
-    }
+  const effectiveBillable = data.isBillable ?? existing.isBillable;
+  if (data.isBilled === true && !effectiveBillable) {
+    res.status(422).json({ error: "Cannot mark as billed — expense is not billable" });
+    return;
   }
 
   const $set: Record<string, unknown> = { updatedAt: new Date() };
@@ -412,7 +425,12 @@ router.patch("/expenses/:id", async (req, res): Promise<void> => {
   if (data.description  !== undefined) $set.description  = data.description.trim();
   if (data.vendor       !== undefined) $set.vendor       = data.vendor?.trim() || null;
   if (data.receiptUrl   !== undefined) $set.receiptUrl   = data.receiptUrl?.trim() || null;
-  if (data.isBillable   !== undefined) $set.isBillable   = data.isBillable;
+  if (data.isBillable   !== undefined) {
+    $set.isBillable = data.isBillable;
+    // Dropping billability must also clear the billed flag, otherwise the
+    // register keeps a cost that is both "not billable" and "billed".
+    if (!data.isBillable) $set.isBilled = false;
+  }
   if (data.isBilled     !== undefined) $set.isBilled     = data.isBilled;
 
   const updated = await ExpenseModel.findOneAndUpdate(

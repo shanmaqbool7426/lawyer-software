@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClerkProvider, RedirectToSignIn, SignIn, SignUp, useAuth, useClerk } from '@clerk/react';
+import { ClerkProvider, RedirectToSignIn, SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -8,28 +8,29 @@ import {
   Activity, AlertCircle, ArrowDownToLine, ArrowLeft, ArrowRight, BarChart3, Bell, BriefcaseBusiness,
   Building2, Calendar, CalendarClock, Car, Check, ClipboardList, Copy, Download, ExternalLink, FilePlus2,
   FileSpreadsheet, FileText, FolderOpen, Import, LayoutDashboard, Link2, Loader2, LogOut, Mail,
-  NotebookPen, Paperclip, PenLine, Plus, Receipt, Search, Settings2, ShieldCheck, Trash2, TrendingUp,
-  Upload, UserRound, Users, UsersRound, X, ReceiptText, Wallet, CalendarDays, ShieldAlert,
+  NotebookPen, Paperclip, PenLine, Phone, Plus, Receipt, Search, Settings2, ShieldCheck, Trash2, TrendingUp,
+  Upload, UserRound, Users, UsersRound, X, ReceiptText, Wallet, CalendarDays, ShieldAlert, Gavel, RefreshCw,
 } from 'lucide-react';
-import { InvoicesPage, NewInvoicePage, InvoiceDetailPage } from '@/pages/invoices';
+import { InvoicesPage, NewInvoicePage, EditInvoicePage, InvoiceDetailPage } from '@/pages/invoices';
 import { ExpensesPage, CaseExpensesPanel } from '@/pages/expenses';
-import { AppointmentsPage, UpcomingAppointmentsPanel } from '@/pages/appointments';
-import { ConflictCheckerPage, InlineClientConflictWarning, InlineCaseConflictWarning } from '@/pages/conflict-checker';
+import { AppointmentsPage, UpcomingAppointmentsPanel, CaseAppointmentsPanel } from '@/pages/appointments';
+import { ConflictCheckerPage, InlineClientConflictWarning, InlineCaseConflictWarning, InlineIncidentWarning } from '@/pages/conflict-checker';
+import { TeamPage } from '@/pages/team';
 import {
   AreaChart, Area, BarChart, Bar, Cell, PieChart, Pie, Tooltip, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts';
 import {
   getDocument, getGetCaseQueryKey, getGetClientQueryKey, getGetDashboardQueryKey, getGetNotificationsQueryKey,
-  getGetReportsSummaryQueryKey, getListCasesQueryKey, getListCaseDocumentsQueryKey, getListClientsQueryKey,
-  getListSignatureRequestsQueryKey, getListTrustEntriesQueryKey, getListWorkspacesQueryKey, getExportOutstandingQueryKey,
+  getGetReportsAnalyticsQueryKey, getGetReportCollectionsQueryKey, getGetReportsSummaryQueryKey, getListCasesQueryKey, getListCaseDocumentsQueryKey, getListClientsQueryKey,
+  getListSignatureRequestsQueryKey, getListTrustEntriesQueryKey, getListWorkspacesQueryKey, getExportReportQueryKey,
   getPortalView, getSignatureRequest, signSignatureRequest, downloadPortalDocument, setWorkspaceId,
   useCommitImport, useCreateCase, useCreateClient, useCreateCourtDate, useCreateDocument, useCreateNote,
   useCreatePayment, useCreatePortalLink, useCreateSignatureRequest, useCreateTrustEntry, useCreateWorkspace,
   useDeleteCase, useDeleteCaseNote, useDeleteClient, useDeleteCourtDate, useDeleteDocument, useDeleteSignatureRequest,
-  useDeleteTrustEntry, useExportOutstanding, useGetCalendarFeed, useGetCase, useGetClient, useGetDashboard,
-  useGetNotifications, useGetReportsSummary, useHealthCheck, useListCases, useListCaseDocuments, useListClients,
+  useDeleteTrustEntry, useExportReport, useGetCalendarFeed, useGetCase, useGetClient, useGetDashboard, useGetMe,
+  useGetNotifications, useGetReportsAnalytics, useGetReportCollections, useGetReportsSummary, useHealthCheck, useListCases, useListCaseDocuments, useListClients,
   useListSignatureRequests, useListTrustEntries, useListWorkspaces, usePreviewImport, useRegenerateCalendarFeed,
-  useRevokePortalLink, useSendPortalEmail, useRefundCasePayment, useUpdateCase, useUpdateCaseNote, useUpdateClient, useVoidCasePayment,
+  useRevokePortalLink, useRecordClientConflictCheck, useSendPortalEmail, useRefundCasePayment, useUpdateCase, useUpdateCaseNote, useUpdateClient, useVoidCasePayment,
 } from '@workspace/api-client-react';
 import type { Case, CaseDetail, Client, Payment } from '@workspace/api-client-react';
 import { setAuthTokenGetter } from '@workspace/api-client-react';
@@ -105,15 +106,64 @@ const clerkAppearance = {
   },
 };
 const money = (value = 0) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(value);
-const dateLabel = (value?: string | null) => value ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value)) : '—';
-const compactDate = (value?: string | null) => value ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric' }).format(new Date(value)) : '—';
+// The API explains refusals in plain language ("Record who received the money.").
+// Show that sentence, not a generic failure line — the person at the desk can act on it.
+const apiErrorText = (error: unknown, fallback: string) => {
+  const payload = (error as { data?: { error?: unknown } } | null | undefined)?.data;
+  const message = payload && typeof payload.error === 'string' ? payload.error.trim() : '';
+  return message || fallback;
+};
+// Date-only fields reach the client as UTC-midnight ISO strings; formatting them
+// in the viewer's timezone shifts them back a day west of UTC. Format those on
+// their own calendar day and leave real timestamps in local time.
+const isUtcMidnight = (d: Date) => d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+const fmtDate = (value: string, options: Intl.DateTimeFormatOptions) => {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA', isUtcMidnight(d) ? { ...options, timeZone: 'UTC' } : options).format(d);
+};
+const dateLabel = (value?: string | null) => (value ? fmtDate(value, { month: 'short', day: 'numeric', year: 'numeric' }) ?? '—' : '—');
+const compactDate = (value?: string | null) => (value ? fmtDate(value, { month: 'short', day: 'numeric' }) ?? '—' : '—');
+// Court times are office times — the client may be reading this from anywhere.
+const firmTimeZone = 'America/Toronto';
+const timeLabel = (value?: string | null) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', { hour: 'numeric', minute: '2-digit', timeZone: firmTimeZone }).format(d);
+};
+// Day-only values travel as ISO strings; compare them as calendar days.
+const isoDay = (value?: string | null) => {
+  if (!value) return '';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+};
+const invoiceLabel = (n?: number | null) => (typeof n === 'number' ? `INV-${String(n).padStart(4, '0')}` : 'Invoice');
+// Upcoming dates first (soonest at the top), then history (most recent first).
+function portalCourtDates<T extends { date: string }>(rows: T[], today: string): T[] {
+  return [...rows].sort((a, b) => {
+    const aSoon = isoDay(a.date) >= today ? 0 : 1;
+    const bSoon = isoDay(b.date) >= today ? 0 : 1;
+    if (aSoon !== bSoon) return aSoon - bSoon;
+    return aSoon === 0 ? isoDay(a.date).localeCompare(isoDay(b.date)) : isoDay(b.date).localeCompare(isoDay(a.date));
+  });
+}
+const localToday = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 const initials = (name = 'Admin') => name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase();
 
 // Court date countdown helpers
 const daysUntil = (dateStr?: string | null): number | null => {
   if (!dateStr) return null;
-  const diff = new Date(dateStr).setHours(0,0,0,0) - new Date().setHours(0,0,0,0);
-  return Math.round(diff / 86400000);
+  const target = new Date(dateStr);
+  if (Number.isNaN(target.getTime())) return null;
+  const targetDay = Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate());
+  const now = new Date();
+  const todayDay = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((targetDay - todayDay) / 86400000);
 };
 const countdownLabel = (days: number | null): string => {
   if (days === null) return '';
@@ -211,26 +261,108 @@ function NavLink({ href, icon: Icon, children }: { href: string; icon: typeof La
   return <Link href={href} data-testid={`link-${href.slice(1) || 'dashboard'}`} className={`nav-link ${active ? 'active' : ''}`}><Icon /> <span>{children}</span></Link>;
 }
 
-function NavSoon({ icon: Icon, children }: { icon: typeof LayoutDashboard; children: React.ReactNode }) {
-  return <div className="nav-link nav-soon" aria-disabled="true" title="Coming soon"><Icon /> <span>{children}</span><span className="pill-soon">Soon</span></div>;
+// Identity shown in the sidebar — the signed-in Clerk user in real mode, a static
+// placeholder in demo mode (where no ClerkProvider exists to read from).
+function StaticIdentity({ name, role }: { name: string; role: string }) {
+  return <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><div className="admin-avatar">{initials(name)}</div><div><div style={{ fontSize: 12, fontWeight: 700 }}>{name}</div><div style={{ fontSize: 10, color: 'hsl(var(--sidebar-foreground) / .5)', marginTop: 3 }}>{role}</div></div></div>;
+}
+function ClerkIdentity({ role }: { role?: string }) {
+  const { user } = useUser();
+  const name = user?.fullName || user?.firstName || 'Admin';
+  // /api/me knows the real workspace role; Clerk metadata is only a fallback.
+  const label = role ?? (typeof user?.publicMetadata?.role === 'string' ? user.publicMetadata.role : 'Administrator');
+  return <StaticIdentity name={name} role={label} />;
+}
+function IdentityBadge({ role }: { role?: string }) {
+  return demoMode ? <StaticIdentity name="Avery McLean" role={role ?? 'Principal paralegal'} /> : <ClerkIdentity role={role} />;
+}
+function ClerkGreetingName() {
+  const { user } = useUser();
+  return <>{user?.firstName || 'there'}</>;
+}
+function GreetingName() {
+  return demoMode ? <>Avery</> : <ClerkGreetingName />;
+}
+
+// Sidebar modules in the order they appear. The server decides which of these an
+// account may open; this table only supplies the route and icon for each key.
+const NAV_ITEMS: { key: string; href: string; label: string; icon: typeof LayoutDashboard }[] = [
+  { key: 'overview', href: '/', label: 'Overview', icon: LayoutDashboard },
+  { key: 'cases', href: '/cases', label: 'Cases', icon: BriefcaseBusiness },
+  { key: 'clients', href: '/clients', label: 'Clients', icon: UsersRound },
+  { key: 'invoices', href: '/invoices', label: 'Invoices', icon: ReceiptText },
+  { key: 'expenses', href: '/expenses', label: 'Expenses', icon: Wallet },
+  { key: 'appointments', href: '/appointments', label: 'Appointments', icon: CalendarDays },
+  { key: 'conflicts', href: '/conflict-check', label: 'Conflict Check', icon: ShieldAlert },
+  { key: 'reports', href: '/reports', label: 'Reports', icon: BarChart3 },
+  { key: 'imports', href: '/import', label: 'Import legacy', icon: Import },
+];
+
+// Mirrors the server's URL → module map, so a bookmarked or typed-in link lands
+// on the same "no access" panel the API would answer with.
+function moduleForLocation(location: string): string | null {
+  if (location === '/' || location === '') return 'overview';
+  const match = NAV_ITEMS.find((item) => item.href !== '/' && (location === item.href || location.startsWith(`${item.href}/`)));
+  return match?.key ?? null;
+}
+
+// Shown instead of the app when the owner has not added this login (or has
+// turned it off) — the sidebar would be empty, so explain why.
+function AccessDenied({ message, onSignOut }: { message: string; onSignOut?: () => void }) {
+  return (
+    <div style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 28, background: 'hsl(var(--background))' }}>
+      <div className="card" style={{ width: '100%', maxWidth: 470, padding: '32px 30px' }} data-testid="state-no-membership">
+        <div className="eyebrow">Workspace access</div>
+        <h1 className="page-title" style={{ fontSize: 25 }}>This account has no access</h1>
+        <p className="page-copy">{message}</p>
+        {onSignOut && <button className="button button-primary" data-testid="button-access-sign-out" style={{ marginTop: 20 }} onClick={onSignOut}>Sign out</button>}
+      </div>
+    </div>
+  );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   const health = useHealthCheck();
   const signOut = demoMode ? undefined : useClerk().signOut;
-  const nav = <><NavLink href="/" icon={LayoutDashboard}>Overview</NavLink><NavLink href="/cases" icon={BriefcaseBusiness}>Cases</NavLink><NavLink href="/clients" icon={UsersRound}>Clients</NavLink><NavSoon icon={ReceiptText}>Invoices</NavSoon><NavSoon icon={Wallet}>Expenses</NavSoon><NavSoon icon={CalendarDays}>Appointments</NavSoon><NavSoon icon={ShieldAlert}>Conflict Check</NavSoon><NavSoon icon={BarChart3}>Reports</NavSoon><NavSoon icon={Import}>Import legacy</NavSoon></>;
+  const [location, setLocation] = useLocation();
+  // /api/me drives both the sidebar and the module gate. Hiding a link is a
+  // courtesy; the API refuses a module whether or not the browser draws it.
+  const me = useGetMe();
+  const allowed = new Set((me.data?.modules ?? []).filter((m) => m.allowed).map((m) => m.key));
+  const activeModule = moduleForLocation(location);
+  const blockedModule = me.data && activeModule !== null && !allowed.has(activeModule) ? activeModule : null;
+  const membershipError = (me.error as { data?: { code?: string; error?: string } } | null)?.data;
+  const accessBlocked = membershipError?.code === 'not_a_member' || membershipError?.code === 'disabled'
+    ? membershipError.error || 'Ask the workspace owner to add your email to the team.'
+    : null;
+  // If /api/me failed for any other reason, keep every link so a network blip
+  // does not lock the desk out; the module gate waits for real data.
+  const offline = me.isError && !accessBlocked;
+  const visible = me.data ? NAV_ITEMS.filter((item) => allowed.has(item.key)) : offline ? NAV_ITEMS : [];
+  const home = visible[0] ?? NAV_ITEMS[0];
+  const blockedItem = NAV_ITEMS.find((item) => item.key === blockedModule);
+  const roleLabel = me.data ? (me.data.role === 'owner' ? 'Workspace owner' : 'Team member') : undefined;
+  const noModules = !!me.data && visible.length === 0;
+  // Home belongs to the overview module, so a member without it lands on their
+  // first module instead of a dead end the moment they sign in.
+  const redirectingHome = location === '/' && !!blockedModule && !noModules;
+  useEffect(() => {
+    if (redirectingHome) setLocation(home.href);
+  }, [redirectingHome, home.href, setLocation]);
+  const nav = <>{visible.map(({ key, href, label, icon: Icon }) => <NavLink key={key} href={href} icon={Icon}>{label}</NavLink>)}{me.data?.canManageTeam && <NavLink href="/team" icon={Users}>Team</NavLink>}</>;
+  if (accessBlocked) return <AccessDenied message={accessBlocked} onSignOut={signOut ? () => signOut({ redirectUrl: `${basePath}/sign-in` }) : undefined} />;
   return <div className="app-shell">
     <aside className="sidebar">
       <Link href="/" className="brand" data-testid="link-brand" style={{ color: 'inherit', textDecoration: 'none', display: 'flex', gap: 10, alignItems: 'center' }}><div className="brand-mark">TT</div><div><div className="brand-name">Docketline</div><div className="brand-sub">Ontario traffic law</div></div></Link>
       <div className="nav-label">Workspace</div><nav>{nav}</nav>
        <div className="nav-label">Account</div><button className="nav-link" data-testid="link-sign-out" onClick={() => signOut?.({ redirectUrl: `${basePath}/sign-in` })}><LogOut /><span>Sign out</span></button>
-      <div className="sidebar-foot"><div style={{ display: 'flex', gap: 10, alignItems: 'center' }}><div className="admin-avatar">AM</div><div><div style={{ fontSize: 12, fontWeight: 700 }}>Avery McLean</div><div style={{ fontSize: 10, color: 'hsl(var(--sidebar-foreground) / .5)', marginTop: 3 }}>Principal paralegal</div></div></div><div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 14, color: 'hsl(var(--sidebar-foreground) / .5)', fontSize: 10 }}><div className="health-dot" style={{ width: 6, height: 6 }} /> {health.isError ? 'Offline mode' : health.isLoading ? 'Checking system' : 'System operational'}</div></div>
+      <div className="sidebar-foot"><IdentityBadge role={roleLabel} /><div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 14, color: 'hsl(var(--sidebar-foreground) / .5)', fontSize: 10 }}><div className="health-dot" style={{ width: 6, height: 6 }} /> {health.isError ? 'Offline mode' : health.isLoading ? 'Checking system' : 'System operational'}</div></div>
     </aside>
     <div className="main-column">
       <div className="mobile-top"><Link href="/" data-testid="link-mobile-brand" style={{ color: 'inherit', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 9 }}><div className="brand-mark">TT</div><strong>Docketline</strong></Link><Link href="/login" data-testid="link-mobile-account" style={{ color: 'inherit' }}><UserRound size={18} /></Link></div>
       <div className="mobile-nav">{nav}</div>
       <header className="topbar"><div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}><WorkspaceSwitcher /><div className="muted" style={{ fontSize: 12 }}>Ontario / <strong style={{ color: 'hsl(var(--foreground))' }}>Operations desk</strong></div></div><div style={{ display: 'flex', alignItems: 'center', gap: 14 }}><div className="health-dot" /><span className="muted" style={{ fontSize: 11 }}>{health.isError ? 'Connection issue' : 'Synced just now'}</span><NotificationsBell /><WorkspaceSettings /></div></header>
-      <main className="page-wrap fade-in">{children}</main>
+      <main className="page-wrap fade-in">{me.isLoading || redirectingHome ? <LoadingState rows={4} /> : noModules ? <EmptyState title="No modules on this account yet" copy="The workspace owner has not given this account any sidebar modules. Ask them to add what you need, then reload this page." /> : blockedModule ? <EmptyState title={`${blockedItem?.label ?? 'This module'} is not part of your access`} copy="Ask the workspace owner to grant this module to your account, then reload the page." action={<Link href={home.href} className="button button-primary" data-testid="link-module-home">Go to {home.label}</Link>} /> : children}</main>
     </div>
   </div>;
 }
@@ -346,6 +478,7 @@ const NOTIF_ICONS: Record<string, { icon: typeof Bell; bg: string; color: string
   'follow-up': { icon: Bell, bg: 'hsl(var(--chart-3) / .14)', color: 'hsl(var(--chart-3))' },
   outstanding: { icon: Receipt, bg: 'hsl(var(--chart-4) / .12)', color: 'hsl(var(--chart-4))' },
   signature: { icon: PenLine, bg: 'hsl(var(--chart-2) / .12)', color: 'hsl(var(--chart-2))' },
+  appointment: { icon: CalendarDays, bg: 'hsl(var(--chart-1) / .14)', color: 'hsl(var(--chart-1))' },
 };
 
 function NotificationsBell() {
@@ -363,7 +496,7 @@ function NotificationsBell() {
         <>
           <div className="popover-backdrop" onClick={() => setOpen(false)} />
           <div className="topbar-popover notif-panel" data-testid="panel-notifications">
-            <div className="notif-head">Reminders <span className="muted" style={{ fontWeight: 500 }}>· court dates, follow-ups, balances, signatures</span></div>
+            <div className="notif-head">Reminders <span className="muted" style={{ fontWeight: 500 }}>· court dates, appointments, follow-ups, balances, signatures</span></div>
             {feed.isLoading ? (
               <div className="notif-empty">Loading reminders…</div>
             ) : !items.length ? (
@@ -665,7 +798,7 @@ function Dashboard() {
             {todayStr}
           </div>
           <h1 className="db-hero-title">
-            {greetIcon} {greeting}, Avery.
+            {greetIcon} {greeting}, <GreetingName />.
           </h1>
           <p className="db-hero-sub">
             Your Ontario traffic law practice — live snapshot across {caseRows.length} {caseRows.length === 1 ? 'matter' : 'matters'} and {totalClients} {totalClients === 1 ? 'client' : 'clients'}.
@@ -1026,7 +1159,7 @@ function NewCase() {
   const [showClient, setShowClient] = useState(false);
   const [selectedClient, setSelectedClient] = useState('');
   const [createdClient, setCreatedClient] = useState<Client | null>(null);
-  const [form, setForm] = useState({ intakeDate: new Date().toISOString().slice(0, 10), offenceDate: '', ticketNumber: '', statuteCode: '', offenceDescription: '', officeCode: '', courtLocation: 'Ontario Court of Justice', status: 'Open', totalFee: '', nextFollowUpDate: '', firstNote: '', responseDeadline: '', citationIssuingAgency: '', officerName: '', officerBadgeNumber: '', offenceLocation: '', speedAlleged: '', speedLimit: '', speedUnit: 'km/h', licencePlate: '', licencePlateRegion: 'ON', vehicleMake: '', vehicleModel: '', vehicleYear: '', vehicleColour: '', vehicleVIN: '', driversLicenceNumber: '', driversLicenceRegion: 'ON', driversLicenceExpiry: '', courtFileNumber: '', courtRoomNumber: '', courtJurisdiction: '', hearingType: '', partType: '', retainerAmount: '', retainerPaidDate: '', setFine: '', victimSurcharge: '', disbursements: '', priority: 'Normal', assignedTo: '', tags: '', disclosureRequestedDate: '', disclosureReceivedDate: '' });
+  const [form, setForm] = useState({ intakeDate: localToday(), offenceDate: '', ticketNumber: '', statuteCode: '', offenceDescription: '', officeCode: '', courtLocation: 'Ontario Court of Justice', status: 'Open', totalFee: '', nextFollowUpDate: '', firstNote: '', responseDeadline: '', citationIssuingAgency: '', officerName: '', officerBadgeNumber: '', offenceLocation: '', speedAlleged: '', speedLimit: '', speedUnit: 'km/h', licencePlate: '', licencePlateRegion: 'ON', vehicleMake: '', vehicleModel: '', vehicleYear: '', vehicleColour: '', vehicleVIN: '', driversLicenceNumber: '', driversLicenceRegion: 'ON', driversLicenceExpiry: '', courtFileNumber: '', courtRoomNumber: '', courtJurisdiction: '', hearingType: '', partType: '', retainerAmount: '', retainerPaidDate: '', setFine: '', victimSurcharge: '', disbursements: '', priority: 'Normal', assignedTo: '', tags: '', disclosureRequestedDate: '', disclosureReceivedDate: '' });
   const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const num = (v: string) => (v === '' ? undefined : Number(v));
   const txt = (v: string) => (v.trim() ? v.trim() : undefined);
@@ -1034,7 +1167,7 @@ function NewCase() {
   if (clients.isLoading) return <><PageHeader eyebrow="Operations / Intake" title="New case" /><LoadingState rows={5} /></>;
   return <><PageHeader eyebrow="Operations / Intake" title="Open a new matter" copy="Start with the client, then capture only what the docket needs to move." action={<Link href="/cases" className="button button-ghost" data-testid="link-cancel-intake"><ArrowLeft size={15} /> Cancel</Link>} />
     {(!clients.data?.data?.length && !createdClient) || showClient ? <div style={{ marginBottom: 18 }}><ClientForm onCreated={(client) => { setCreatedClient(client); setSelectedClient(client.id); setShowClient(false); }} /></div> : null}
-    <section className="card detail-card"><div className="section-title">Case intake</div><div className="section-kicker">Required fields are kept intentionally short. You can edit the record later.</div><div className="form-grid" style={{ marginTop: 20 }}><div className="form-field full"><label className="form-label">Client</label><div style={{ display: 'flex', gap: 8 }}><select className="select" data-testid="select-intake-client" value={selectedClient} onChange={(e) => setSelectedClient(e.target.value)}><option value="">Select a client</option>{(clients.data?.data || []).map((client) => <option value={client.id} key={client.id}>{client.fullName}</option>)}</select>{!showClient && <button className="button button-ghost" data-testid="button-add-intake-client" onClick={() => setShowClient(true)}><Plus size={15} /> New client</button>}</div></div><div className="form-field"><label className="form-label">Intake date</label><input className="field" type="date" data-testid="input-intake-date" value={form.intakeDate} onChange={(e) => set('intakeDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Offence date</label><input className="field" type="date" data-testid="input-offence-date" value={form.offenceDate} onChange={(e) => set('offenceDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Ticket number</label><input className="field" data-testid="input-ticket-number" value={form.ticketNumber} onChange={(e) => set('ticketNumber', e.target.value)} placeholder="e.g. T12345678" /></div><div className="form-field"><label className="form-label">Statute code</label><input className="field" data-testid="input-statute-code" value={form.statuteCode} onChange={(e) => set('statuteCode', e.target.value)} placeholder="HTA 128" /></div><div className="form-field full"><InlineCaseConflictWarning ticketNumber={form.ticketNumber} statuteCode={form.statuteCode} clientId={selectedClient || undefined} /></div><div className="form-field full"><label className="form-label">Offence description</label><input className="field" data-testid="input-offence-description" value={form.offenceDescription} onChange={(e) => set('offenceDescription', e.target.value)} placeholder="Driving while under suspension" /></div><div className="form-field"><label className="form-label">Office code</label><input className="field" data-testid="input-office-code" value={form.officeCode} onChange={(e) => set('officeCode', e.target.value)} placeholder="TOR-03" /></div><div className="form-field"><label className="form-label">Court location</label><input className="field" data-testid="input-court-location" value={form.courtLocation} onChange={(e) => set('courtLocation', e.target.value)} /></div><div className="form-field"><label className="form-label">Status</label><select className="select" data-testid="select-intake-status" value={form.status} onChange={(e) => set('status', e.target.value)}>{statuses.map((item) => <option key={item}>{item}</option>)}</select></div><div className="form-field"><label className="form-label">Total fee (CAD)</label><input className="field" type="number" min="0" data-testid="input-total-fee" value={form.totalFee} onChange={(e) => set('totalFee', e.target.value)} placeholder="1250" /></div><div className="form-field"><label className="form-label">Next follow-up</label><input className="field" type="date" data-testid="input-next-followup" value={form.nextFollowUpDate} onChange={(e) => set('nextFollowUpDate', e.target.value)} /></div><div className="form-field full"><label className="form-label">First note <span className="muted">(optional)</span></label><textarea className="textarea" data-testid="input-first-note" value={form.firstNote} onChange={(e) => set('firstNote', e.target.value)} placeholder="What should you remember when you return to this file?" /></div></div><details className="intake-extra" data-testid="details-intake-extended"><summary>Add ticket, vehicle, driver, court &amp; fee details (optional)</summary><div className="form-grid" style={{ marginTop: 14 }}><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10 }}>Ticket &amp; officer</div></div><div className="form-field"><label className="form-label">Response deadline</label><input className="field" type="date" data-testid="input-response-deadline" value={form.responseDeadline} onChange={(e) => set('responseDeadline', e.target.value)} /></div><div className="form-field"><label className="form-label">Issuing agency</label><input className="field" data-testid="input-citation-agency" value={form.citationIssuingAgency} onChange={(e) => set('citationIssuingAgency', e.target.value)} placeholder="Peel Regional Police" /></div><div className="form-field"><label className="form-label">Officer name</label><input className="field" data-testid="input-officer-name" value={form.officerName} onChange={(e) => set('officerName', e.target.value)} placeholder="Const. J. Whitfield" /></div><div className="form-field"><label className="form-label">Badge number</label><input className="field" data-testid="input-officer-badge" value={form.officerBadgeNumber} onChange={(e) => set('officerBadgeNumber', e.target.value)} /></div><div className="form-field"><label className="form-label">Offence location</label><input className="field" data-testid="input-offence-location" value={form.offenceLocation} onChange={(e) => set('offenceLocation', e.target.value)} placeholder="Hwy 410 @ Courtneypark" /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Vehicle &amp; speed</div></div><div className="form-field"><label className="form-label">Speed alleged</label><input className="field" type="number" data-testid="input-speed-alleged" value={form.speedAlleged} onChange={(e) => set('speedAlleged', e.target.value)} /></div><div className="form-field"><label className="form-label">Speed limit</label><input className="field" type="number" data-testid="input-speed-limit" value={form.speedLimit} onChange={(e) => set('speedLimit', e.target.value)} /></div><div className="form-field"><label className="form-label">Speed unit</label><select className="select" data-testid="select-speed-unit" value={form.speedUnit} onChange={(e) => set('speedUnit', e.target.value)}><option>km/h</option><option>mph</option></select></div><div className="form-field"><label className="form-label">Licence plate</label><input className="field" data-testid="input-licence-plate" value={form.licencePlate} onChange={(e) => set('licencePlate', e.target.value)} placeholder="CXQD 882" /></div><div className="form-field"><label className="form-label">Plate region</label><input className="field" data-testid="input-plate-region" value={form.licencePlateRegion} onChange={(e) => set('licencePlateRegion', e.target.value)} /></div><div className="form-field"><label className="form-label">Make</label><input className="field" data-testid="input-vehicle-make" value={form.vehicleMake} onChange={(e) => set('vehicleMake', e.target.value)} placeholder="Honda" /></div><div className="form-field"><label className="form-label">Model</label><input className="field" data-testid="input-vehicle-model" value={form.vehicleModel} onChange={(e) => set('vehicleModel', e.target.value)} placeholder="Civic" /></div><div className="form-field"><label className="form-label">Year</label><input className="field" type="number" data-testid="input-vehicle-year" value={form.vehicleYear} onChange={(e) => set('vehicleYear', e.target.value)} placeholder="2023" /></div><div className="form-field"><label className="form-label">Colour</label><input className="field" data-testid="input-vehicle-colour" value={form.vehicleColour} onChange={(e) => set('vehicleColour', e.target.value)} /></div><div className="form-field"><label className="form-label">VIN</label><input className="field" data-testid="input-vehicle-vin" value={form.vehicleVIN} onChange={(e) => set('vehicleVIN', e.target.value)} /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Driver's licence</div></div><div className="form-field"><label className="form-label">Licence number</label><input className="field" data-testid="input-dl-number" value={form.driversLicenceNumber} onChange={(e) => set('driversLicenceNumber', e.target.value)} /></div><div className="form-field"><label className="form-label">Licence region</label><input className="field" data-testid="input-dl-region" value={form.driversLicenceRegion} onChange={(e) => set('driversLicenceRegion', e.target.value)} /></div><div className="form-field"><label className="form-label">Licence expiry</label><input className="field" type="date" data-testid="input-dl-expiry" value={form.driversLicenceExpiry} onChange={(e) => set('driversLicenceExpiry', e.target.value)} /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Court</div></div><div className="form-field"><label className="form-label">Court file no.</label><input className="field" data-testid="input-court-file" value={form.courtFileNumber} onChange={(e) => set('courtFileNumber', e.target.value)} placeholder="CF-26-009871" /></div><div className="form-field"><label className="form-label">Room</label><input className="field" data-testid="input-court-room" value={form.courtRoomNumber} onChange={(e) => set('courtRoomNumber', e.target.value)} /></div><div className="form-field"><label className="form-label">Jurisdiction</label><input className="field" data-testid="input-court-jurisdiction" value={form.courtJurisdiction} onChange={(e) => set('courtJurisdiction', e.target.value)} placeholder="Brampton" /></div><div className="form-field"><label className="form-label">Hearing type</label><input className="field" data-testid="input-hearing-type" value={form.hearingType} onChange={(e) => set('hearingType', e.target.value)} placeholder="Trial" /></div><div className="form-field"><label className="form-label">Part type</label><input className="field" data-testid="input-part-type" value={form.partType} onChange={(e) => set('partType', e.target.value)} placeholder="Part I" /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Fees, retainer &amp; workflow</div></div><div className="form-field"><label className="form-label">Retainer amount</label><input className="field" type="number" data-testid="input-retainer-amount" value={form.retainerAmount} onChange={(e) => set('retainerAmount', e.target.value)} /></div><div className="form-field"><label className="form-label">Retainer paid date</label><input className="field" type="date" data-testid="input-retainer-paid" value={form.retainerPaidDate} onChange={(e) => set('retainerPaidDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Set fine</label><input className="field" type="number" data-testid="input-set-fine" value={form.setFine} onChange={(e) => set('setFine', e.target.value)} /></div><div className="form-field"><label className="form-label">Victim surcharge</label><input className="field" type="number" data-testid="input-victim-surcharge" value={form.victimSurcharge} onChange={(e) => set('victimSurcharge', e.target.value)} /></div><div className="form-field"><label className="form-label">Disbursements</label><input className="field" type="number" data-testid="input-disbursements" value={form.disbursements} onChange={(e) => set('disbursements', e.target.value)} /></div><div className="form-field"><label className="form-label">Priority</label><select className="select" data-testid="select-priority" value={form.priority} onChange={(e) => set('priority', e.target.value)}>{['Low', 'Normal', 'High', 'Urgent'].map((p) => <option key={p}>{p}</option>)}</select></div><div className="form-field"><label className="form-label">Assigned to</label><input className="field" data-testid="input-assigned-to" value={form.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></div><div className="form-field"><label className="form-label">Tags <span className="muted">(comma separated)</span></label><input className="field" data-testid="input-tags" value={form.tags} onChange={(e) => set('tags', e.target.value)} placeholder="speeding, trial" /></div><div className="form-field"><label className="form-label">Disclosure requested</label><input className="field" type="date" data-testid="input-disclosure-requested" value={form.disclosureRequestedDate} onChange={(e) => set('disclosureRequestedDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Disclosure received</label><input className="field" type="date" data-testid="input-disclosure-received" value={form.disclosureReceivedDate} onChange={(e) => set('disclosureReceivedDate', e.target.value)} /></div></div></details>{create.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 12, marginTop: 15 }}>Case could not be created. Check the required fields and try again.</div>}<div className="form-actions"><Link href="/cases" className="button button-ghost" data-testid="button-cancel-case">Cancel</Link><button className="button button-accent" data-testid="button-create-case" disabled={create.isPending || !selectedClient || !form.offenceDate || !form.totalFee} onClick={submit}>{create.isPending ? <Loader2 className="animate-spin" size={15} /> : <FilePlus2 size={15} />} Open case</button></div></section>
+    <section className="card detail-card"><div className="section-title">Case intake</div><div className="section-kicker">Required fields are kept intentionally short. You can edit the record later.</div><div className="form-grid" style={{ marginTop: 20 }}><div className="form-field full"><label className="form-label">Client</label><div style={{ display: 'flex', gap: 8 }}><select className="select" data-testid="select-intake-client" value={selectedClient} onChange={(e) => setSelectedClient(e.target.value)}><option value="">Select a client</option>{(clients.data?.data || []).map((client) => <option value={client.id} key={client.id}>{client.fullName}</option>)}</select>{!showClient && <button className="button button-ghost" data-testid="button-add-intake-client" onClick={() => setShowClient(true)}><Plus size={15} /> New client</button>}</div></div><div className="form-field"><label className="form-label">Intake date</label><input className="field" type="date" data-testid="input-intake-date" value={form.intakeDate} onChange={(e) => set('intakeDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Offence date</label><input className="field" type="date" data-testid="input-offence-date" value={form.offenceDate} onChange={(e) => set('offenceDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Ticket number</label><input className="field" data-testid="input-ticket-number" value={form.ticketNumber} onChange={(e) => set('ticketNumber', e.target.value)} placeholder="e.g. T12345678" /></div><div className="form-field"><label className="form-label">Statute code</label><input className="field" data-testid="input-statute-code" value={form.statuteCode} onChange={(e) => set('statuteCode', e.target.value)} placeholder="HTA 128" /></div><div className="form-field full"><InlineCaseConflictWarning ticketNumber={form.ticketNumber} statuteCode={form.statuteCode} clientId={selectedClient || undefined} /></div><div className="form-field full"><InlineIncidentWarning offenceDate={form.offenceDate} ticketNumber={form.ticketNumber} officerName={form.officerName} officerBadgeNumber={form.officerBadgeNumber} offenceLocation={form.offenceLocation} clientId={selectedClient || undefined} /></div><div className="form-field full"><label className="form-label">Offence description</label><input className="field" data-testid="input-offence-description" value={form.offenceDescription} onChange={(e) => set('offenceDescription', e.target.value)} placeholder="Driving while under suspension" /></div><div className="form-field"><label className="form-label">Office code</label><input className="field" data-testid="input-office-code" value={form.officeCode} onChange={(e) => set('officeCode', e.target.value)} placeholder="TOR-03" /></div><div className="form-field"><label className="form-label">Court location</label><input className="field" data-testid="input-court-location" value={form.courtLocation} onChange={(e) => set('courtLocation', e.target.value)} /></div><div className="form-field"><label className="form-label">Status</label><select className="select" data-testid="select-intake-status" value={form.status} onChange={(e) => set('status', e.target.value)}>{statuses.map((item) => <option key={item}>{item}</option>)}</select></div><div className="form-field"><label className="form-label">Total fee (CAD)</label><input className="field" type="number" min="0" data-testid="input-total-fee" value={form.totalFee} onChange={(e) => set('totalFee', e.target.value)} placeholder="1250" /></div><div className="form-field"><label className="form-label">Next follow-up</label><input className="field" type="date" data-testid="input-next-followup" value={form.nextFollowUpDate} onChange={(e) => set('nextFollowUpDate', e.target.value)} /></div><div className="form-field full"><label className="form-label">First note <span className="muted">(optional)</span></label><textarea className="textarea" data-testid="input-first-note" value={form.firstNote} onChange={(e) => set('firstNote', e.target.value)} placeholder="What should you remember when you return to this file?" /></div></div><details className="intake-extra" data-testid="details-intake-extended"><summary>Add ticket, vehicle, driver, court &amp; fee details (optional)</summary><div className="form-grid" style={{ marginTop: 14 }}><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10 }}>Ticket &amp; officer</div></div><div className="form-field"><label className="form-label">Response deadline</label><input className="field" type="date" data-testid="input-response-deadline" value={form.responseDeadline} onChange={(e) => set('responseDeadline', e.target.value)} /></div><div className="form-field"><label className="form-label">Issuing agency</label><input className="field" data-testid="input-citation-agency" value={form.citationIssuingAgency} onChange={(e) => set('citationIssuingAgency', e.target.value)} placeholder="Peel Regional Police" /></div><div className="form-field"><label className="form-label">Officer name</label><input className="field" data-testid="input-officer-name" value={form.officerName} onChange={(e) => set('officerName', e.target.value)} placeholder="Const. J. Whitfield" /></div><div className="form-field"><label className="form-label">Badge number</label><input className="field" data-testid="input-officer-badge" value={form.officerBadgeNumber} onChange={(e) => set('officerBadgeNumber', e.target.value)} /></div><div className="form-field"><label className="form-label">Offence location</label><input className="field" data-testid="input-offence-location" value={form.offenceLocation} onChange={(e) => set('offenceLocation', e.target.value)} placeholder="Hwy 410 @ Courtneypark" /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Vehicle &amp; speed</div></div><div className="form-field"><label className="form-label">Speed alleged</label><input className="field" type="number" data-testid="input-speed-alleged" value={form.speedAlleged} onChange={(e) => set('speedAlleged', e.target.value)} /></div><div className="form-field"><label className="form-label">Speed limit</label><input className="field" type="number" data-testid="input-speed-limit" value={form.speedLimit} onChange={(e) => set('speedLimit', e.target.value)} /></div><div className="form-field"><label className="form-label">Speed unit</label><select className="select" data-testid="select-speed-unit" value={form.speedUnit} onChange={(e) => set('speedUnit', e.target.value)}><option>km/h</option><option>mph</option></select></div><div className="form-field"><label className="form-label">Licence plate</label><input className="field" data-testid="input-licence-plate" value={form.licencePlate} onChange={(e) => set('licencePlate', e.target.value)} placeholder="CXQD 882" /></div><div className="form-field"><label className="form-label">Plate region</label><input className="field" data-testid="input-plate-region" value={form.licencePlateRegion} onChange={(e) => set('licencePlateRegion', e.target.value)} /></div><div className="form-field"><label className="form-label">Make</label><input className="field" data-testid="input-vehicle-make" value={form.vehicleMake} onChange={(e) => set('vehicleMake', e.target.value)} placeholder="Honda" /></div><div className="form-field"><label className="form-label">Model</label><input className="field" data-testid="input-vehicle-model" value={form.vehicleModel} onChange={(e) => set('vehicleModel', e.target.value)} placeholder="Civic" /></div><div className="form-field"><label className="form-label">Year</label><input className="field" type="number" data-testid="input-vehicle-year" value={form.vehicleYear} onChange={(e) => set('vehicleYear', e.target.value)} placeholder="2023" /></div><div className="form-field"><label className="form-label">Colour</label><input className="field" data-testid="input-vehicle-colour" value={form.vehicleColour} onChange={(e) => set('vehicleColour', e.target.value)} /></div><div className="form-field"><label className="form-label">VIN</label><input className="field" data-testid="input-vehicle-vin" value={form.vehicleVIN} onChange={(e) => set('vehicleVIN', e.target.value)} /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Driver's licence</div></div><div className="form-field"><label className="form-label">Licence number</label><input className="field" data-testid="input-dl-number" value={form.driversLicenceNumber} onChange={(e) => set('driversLicenceNumber', e.target.value)} /></div><div className="form-field"><label className="form-label">Licence region</label><input className="field" data-testid="input-dl-region" value={form.driversLicenceRegion} onChange={(e) => set('driversLicenceRegion', e.target.value)} /></div><div className="form-field"><label className="form-label">Licence expiry</label><input className="field" type="date" data-testid="input-dl-expiry" value={form.driversLicenceExpiry} onChange={(e) => set('driversLicenceExpiry', e.target.value)} /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Court</div></div><div className="form-field"><label className="form-label">Court file no.</label><input className="field" data-testid="input-court-file" value={form.courtFileNumber} onChange={(e) => set('courtFileNumber', e.target.value)} placeholder="CF-26-009871" /></div><div className="form-field"><label className="form-label">Room</label><input className="field" data-testid="input-court-room" value={form.courtRoomNumber} onChange={(e) => set('courtRoomNumber', e.target.value)} /></div><div className="form-field"><label className="form-label">Jurisdiction</label><input className="field" data-testid="input-court-jurisdiction" value={form.courtJurisdiction} onChange={(e) => set('courtJurisdiction', e.target.value)} placeholder="Brampton" /></div><div className="form-field"><label className="form-label">Hearing type</label><input className="field" data-testid="input-hearing-type" value={form.hearingType} onChange={(e) => set('hearingType', e.target.value)} placeholder="Trial" /></div><div className="form-field"><label className="form-label">Part type</label><input className="field" data-testid="input-part-type" value={form.partType} onChange={(e) => set('partType', e.target.value)} placeholder="Part I" /></div><div className="form-field full"><div className="form-label" style={{ textTransform: 'uppercase', letterSpacing: '.07em', fontSize: 10, marginTop: 6 }}>Fees, retainer &amp; workflow</div></div><div className="form-field"><label className="form-label">Retainer amount</label><input className="field" type="number" data-testid="input-retainer-amount" value={form.retainerAmount} onChange={(e) => set('retainerAmount', e.target.value)} /></div><div className="form-field"><label className="form-label">Retainer paid date</label><input className="field" type="date" data-testid="input-retainer-paid" value={form.retainerPaidDate} onChange={(e) => set('retainerPaidDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Set fine</label><input className="field" type="number" data-testid="input-set-fine" value={form.setFine} onChange={(e) => set('setFine', e.target.value)} /></div><div className="form-field"><label className="form-label">Victim surcharge</label><input className="field" type="number" data-testid="input-victim-surcharge" value={form.victimSurcharge} onChange={(e) => set('victimSurcharge', e.target.value)} /></div><div className="form-field"><label className="form-label">Disbursements</label><input className="field" type="number" data-testid="input-disbursements" value={form.disbursements} onChange={(e) => set('disbursements', e.target.value)} /></div><div className="form-field"><label className="form-label">Priority</label><select className="select" data-testid="select-priority" value={form.priority} onChange={(e) => set('priority', e.target.value)}>{['Low', 'Normal', 'High', 'Urgent'].map((p) => <option key={p}>{p}</option>)}</select></div><div className="form-field"><label className="form-label">Assigned to</label><input className="field" data-testid="input-assigned-to" value={form.assignedTo} onChange={(e) => set('assignedTo', e.target.value)} /></div><div className="form-field"><label className="form-label">Tags <span className="muted">(comma separated)</span></label><input className="field" data-testid="input-tags" value={form.tags} onChange={(e) => set('tags', e.target.value)} placeholder="speeding, trial" /></div><div className="form-field"><label className="form-label">Disclosure requested</label><input className="field" type="date" data-testid="input-disclosure-requested" value={form.disclosureRequestedDate} onChange={(e) => set('disclosureRequestedDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Disclosure received</label><input className="field" type="date" data-testid="input-disclosure-received" value={form.disclosureReceivedDate} onChange={(e) => set('disclosureReceivedDate', e.target.value)} /></div></div></details>{create.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 12, marginTop: 15 }}>Case could not be created. Check the required fields and try again.</div>}<div className="form-actions"><Link href="/cases" className="button button-ghost" data-testid="button-cancel-case">Cancel</Link><button className="button button-accent" data-testid="button-create-case" disabled={create.isPending || !selectedClient || !form.offenceDate || !form.totalFee} onClick={submit}>{create.isPending ? <Loader2 className="animate-spin" size={15} /> : <FilePlus2 size={15} />} Open case</button></div></section>
   </>;
 }
 
@@ -1047,7 +1180,8 @@ function CaseDetailPage() {
   const payment = useCreatePayment();
   const note = useCreateNote();
   const [editing, setEditing] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ amount: '', date: new Date().toISOString().slice(0, 10), method: 'E-transfer', note: '', reference: '', allocationType: 'Installment', receivedBy: '' });
+  const [paymentForm, setPaymentForm] = useState({ amount: '', date: localToday(), method: 'E-transfer', note: '', reference: '', allocationType: 'Installment', receivedBy: '' });
+  const [lastReceipt, setLastReceipt] = useState('');
   const [noteText, setNoteText] = useState('');
   const [noteVisible, setNoteVisible] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -1057,7 +1191,21 @@ function CaseDetailPage() {
   const editTxt = (v?: string) => (v === undefined || v.trim() === '' ? null : v.trim());
   const editDay = (v?: string) => (v === undefined || v === '' ? null : v);
   const saveEdit = () => { if (!item) return; update.mutate({ id, data: { intakeDate: form.intakeDate, offenceDate: form.offenceDate, ticketNumber: form.ticketNumber || undefined, statuteCode: form.statuteCode || undefined, offenceDescription: form.offenceDescription || undefined, officeCode: form.officeCode || undefined, courtLocation: form.courtLocation || undefined, status: form.status, totalFee: Number(form.totalFee), nextFollowUpDate: form.nextFollowUpDate || null, responseDeadline: editDay(form.responseDeadline), citationIssuingAgency: editTxt(form.citationIssuingAgency), officerName: editTxt(form.officerName), officerBadgeNumber: editTxt(form.officerBadgeNumber), offenceLocation: editTxt(form.offenceLocation), speedAlleged: editNum(form.speedAlleged), speedLimit: editNum(form.speedLimit), speedUnit: editTxt(form.speedUnit), licencePlate: editTxt(form.licencePlate), licencePlateRegion: editTxt(form.licencePlateRegion), vehicleMake: editTxt(form.vehicleMake), vehicleModel: editTxt(form.vehicleModel), vehicleYear: editNum(form.vehicleYear), vehicleColour: editTxt(form.vehicleColour), vehicleVIN: editTxt(form.vehicleVIN), driversLicenceNumber: editTxt(form.driversLicenceNumber), driversLicenceRegion: editTxt(form.driversLicenceRegion), driversLicenceExpiry: editDay(form.driversLicenceExpiry), courtFileNumber: editTxt(form.courtFileNumber), courtRoomNumber: editTxt(form.courtRoomNumber), courtJurisdiction: editTxt(form.courtJurisdiction), hearingType: editTxt(form.hearingType), partType: editTxt(form.partType), retainerAmount: editNum(form.retainerAmount), retainerPaidDate: editDay(form.retainerPaidDate), setFine: editNum(form.setFine), victimSurcharge: editNum(form.victimSurcharge), disbursements: editNum(form.disbursements), outcome: editTxt(form.outcome), reducedCharge: editTxt(form.reducedCharge), courtFineAmount: editNum(form.courtFineAmount), demeritPoints: editNum(form.demeritPoints), licenceSuspended: form.licenceSuspended === '' ? null : form.licenceSuspended === 'true', closedDate: editDay(form.closedDate), priority: editTxt(form.priority), assignedTo: editTxt(form.assignedTo), tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : null, disclosureRequestedDate: editDay(form.disclosureRequestedDate), disclosureReceivedDate: editDay(form.disclosureReceivedDate) } }, { onSuccess: (updated) => { queryClient.setQueryData(getGetCaseQueryKey(id), (old) => old ? { ...old, ...updated } : updated); queryClient.invalidateQueries({ queryKey: getListCasesQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }); setEditing(false); } }); };
-  const addPayment = () => { if (!paymentForm.amount) return; payment.mutate({ id, data: { amount: Number(paymentForm.amount), date: paymentForm.date, method: paymentForm.method, note: paymentForm.note || undefined, reference: paymentForm.reference.trim() || undefined, allocationType: paymentForm.allocationType as 'Retainer' | 'Installment' | 'Final Payment' | 'Disbursement' | 'General', receivedBy: paymentForm.receivedBy.trim() || undefined } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetCaseQueryKey(id) }); queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetReportsSummaryQueryKey() }); setPaymentForm((current) => ({ ...current, amount: '', note: '', reference: '' })); } }); };
+  const addPayment = () => {
+    const receivedBy = paymentForm.receivedBy.trim();
+    if (!paymentForm.amount || !receivedBy) return;
+    setLastReceipt('');
+    payment.mutate({ id, data: { amount: Number(paymentForm.amount), date: paymentForm.date, method: paymentForm.method, note: paymentForm.note || undefined, reference: paymentForm.reference.trim() || undefined, allocationType: paymentForm.allocationType as 'Retainer' | 'Installment' | 'Final Payment' | 'Disbursement' | 'General', receivedBy } }, {
+      onSuccess: (recorded) => {
+        queryClient.invalidateQueries({ queryKey: getGetCaseQueryKey(id) });
+        queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetReportsSummaryQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetReportCollectionsQueryKey() });
+        setLastReceipt(recorded.receiptNumber ?? '');
+        setPaymentForm((current) => ({ ...current, amount: '', note: '', reference: '' }));
+      },
+    });
+  };
   const addNote = () => { if (!noteText.trim()) return; note.mutate({ id, data: { text: noteText.trim(), clientVisible: noteVisible || undefined } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetCaseQueryKey(id) }); setNoteText(''); setNoteVisible(false); } }); };
   const noteUpdate = useUpdateCaseNote();
   const noteDelete = useDeleteCaseNote();
@@ -1086,7 +1234,7 @@ function CaseDetailPage() {
   const trustQuery = useListTrustEntries(id, { query: { queryKey: getListTrustEntriesQueryKey(id) } });
   const trustCreate = useCreateTrustEntry();
   const trustDelete = useDeleteTrustEntry();
-  const [trustForm, setTrustForm] = useState({ type: 'deposit', amount: '', date: new Date().toISOString().slice(0, 10), note: '' });
+  const [trustForm, setTrustForm] = useState({ type: 'deposit', amount: '', date: localToday(), note: '' });
   const trustEntries = trustQuery.data?.data ?? [];
   const addTrustEntry = () => {
     if (!trustForm.amount) return;
@@ -1239,10 +1387,10 @@ function CaseDetailPage() {
   };
   if (detail.isLoading) return <><PageHeader eyebrow="Case file" title="Loading case…" /><LoadingState rows={6} /></>;
   if (detail.isError || !item) return <><PageHeader eyebrow="Case file" title="Case unavailable" /><ErrorState onRetry={() => detail.refetch()} /></>;
-  const timeline = [...(item.notes || []).map((entry) => ({ key: `n-${entry.id}`, kind: 'note' as const, noteId: entry.id, text: entry.text, date: entry.createdAt, title: 'Case note', copy: entry.text, clientVisible: entry.clientVisible ?? false, payment: undefined as Payment | undefined })), ...(item.payments || []).map((entry) => ({ key: `p-${entry.id}`, kind: 'payment' as const, noteId: '', text: '', clientVisible: false, date: entry.date, title: entry.isVoided ? `Payment voided · ${money(entry.amount)}` : entry.isRefund ? `Refund issued · −${money(entry.amount)}` : `Payment recorded · ${money(entry.amount)}`, copy: [entry.method, entry.isVoided ? (entry.voidReason || 'Voided') : null, entry.note].filter(Boolean).join(' · ') || 'Payment activity', payment: entry as Payment | undefined })), ...(item.courtDates || []).map((entry) => ({ key: `c-${entry.id}`, kind: 'court' as const, noteId: '', text: '', clientVisible: false, date: entry.date, title: 'Court date', copy: entry.outcome || 'Scheduled appearance', payment: undefined as Payment | undefined }))].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const timeline = [...(item.notes || []).map((entry) => ({ key: `n-${entry.id}`, kind: 'note' as const, noteId: entry.id, text: entry.text, date: entry.createdAt, title: 'Case note', copy: entry.text, clientVisible: entry.clientVisible ?? false, payment: undefined as Payment | undefined })), ...(item.payments || []).map((entry) => ({ key: `p-${entry.id}`, kind: 'payment' as const, noteId: '', text: '', clientVisible: false, date: entry.date, title: entry.isVoided ? `Payment voided · ${money(entry.amount)}` : entry.isRefund ? `Refund issued · −${money(entry.amount)}` : `Payment recorded · ${money(entry.amount)}`, copy: [entry.receiptNumber, entry.method, entry.isVoided ? (entry.voidReason || 'Voided') : null, entry.note].filter(Boolean).join(' · ') || 'Payment activity', payment: entry as Payment | undefined })), ...(item.courtDates || []).map((entry) => ({ key: `c-${entry.id}`, kind: 'court' as const, noteId: '', text: '', clientVisible: false, date: entry.date, title: 'Court date', copy: entry.outcome || 'Scheduled appearance', payment: undefined as Payment | undefined }))].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const setField = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
   return <><div className="detail-hero"><div><Link href="/cases" className="muted" data-testid="link-back-cases" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none', fontSize: 11 }}><ArrowLeft size={13} /> Case register</Link><div className="eyebrow" style={{ marginTop: 20 }}>Case file / Active record</div><h1 className="page-title">{item.clientName}</h1><div className="detail-id">CASE #{item.caseNumber} <span style={{ opacity: .45 }}>·</span> {item.ticketNumber || 'Ticket number pending'}</div></div><div className="button-row" style={{ display: 'flex', gap: 8 }}><StatusPill status={item.status} /><button className="button button-ghost" data-testid="button-edit-case" onClick={() => editing ? setEditing(false) : startEdit()}>{editing ? <X size={15} /> : <NotebookPen size={15} />} {editing ? 'Cancel edit' : 'Edit record'}</button><button className="button button-danger" data-testid="button-delete-case" onClick={deleteThis} disabled={remove.isPending}><Trash2 size={14} /></button></div></div>
-    <div className="money-band"><div className="money-cell"><div className="money-label">Total fee</div><div className="money-value">{money(item.totalFee)}</div></div><div className="money-cell"><div className="money-label">Received</div><div className="money-value" style={{ color: 'hsl(var(--chart-2))' }}>{money(item.amountReceived)}</div></div><div className="money-cell"><div className="money-label">Balance owing</div><div className="money-value warn">{money(item.balanceOwing)}</div></div></div>
+    <div className="money-band"><div className="money-cell"><div className="money-label">Total owed</div><div className="money-value">{money(item.totalOwed)}</div></div><div className="money-cell"><div className="money-label">Received</div><div className="money-value" style={{ color: 'hsl(var(--chart-2))' }}>{money(item.amountReceived)}</div></div><div className="money-cell"><div className="money-label">Balance owing</div><div className="money-value warn">{money(item.balanceOwing)}</div></div>{item.creditBalance > 0 && <div className="money-cell"><div className="money-label">Client credit</div><div className="money-value" data-testid="value-case-credit" style={{ color: 'hsl(var(--chart-2))' }}>{money(item.creditBalance)}</div></div>}</div>
     {editing ? <section className="card detail-card" style={{ marginBottom: 18 }}><div className="section-head"><div><div className="section-title">Edit case record</div><div className="section-kicker">Changes save back to the case register.</div></div><button className="button button-accent" data-testid="button-save-case" disabled={update.isPending} onClick={saveEdit}>{update.isPending ? <Loader2 className="animate-spin" size={15} /> : <Check size={15} />} Save changes</button></div><div className="form-grid">{[['intakeDate','Intake date','date'],['offenceDate','Offence date','date'],['ticketNumber','Ticket number','text'],['statuteCode','Statute code','text'],['officeCode','Office code','text'],['courtLocation','Court location','text'],['totalFee','Total fee (CAD)','number'],['nextFollowUpDate','Next follow-up','date']].map(([key, label, type]) => <div className="form-field" key={key}><label className="form-label">{label}</label><input className="field" type={type} data-testid={`input-edit-${key}`} value={form[key] || ''} onChange={(e) => setField(key, e.target.value)} /></div>)}<div className="form-field"><label className="form-label">Status</label><select className="select" data-testid="select-edit-status" value={form.status || ''} onChange={(e) => setField('status', e.target.value)}>{statuses.map((entry) => <option key={entry}>{entry}</option>)}</select></div><div className="form-field full"><label className="form-label">Offence description</label><input className="field" data-testid="input-edit-offence-description" value={form.offenceDescription || ''} onChange={(e) => setField('offenceDescription', e.target.value)} /></div><details className="intake-extra"><summary>Edit ticket, vehicle, driver, court, fees &amp; outcome details</summary><div className="form-grid" style={{ marginTop: 14 }}>{[['responseDeadline','Response deadline','date'],['citationIssuingAgency','Issuing agency','text'],['officerName','Officer name','text'],['officerBadgeNumber','Badge number','text'],['offenceLocation','Offence location','text'],['speedAlleged','Speed alleged','number'],['speedLimit','Speed limit','number'],['licencePlate','Licence plate','text'],['licencePlateRegion','Plate region','text'],['vehicleMake','Make','text'],['vehicleModel','Model','text'],['vehicleYear','Vehicle year','number'],['vehicleColour','Colour','text'],['vehicleVIN','VIN','text'],['driversLicenceNumber','Licence number','text'],['driversLicenceRegion','Licence region','text'],['driversLicenceExpiry','Licence expiry','date'],['courtFileNumber','Court file no.','text'],['courtRoomNumber','Room','text'],['courtJurisdiction','Jurisdiction','text'],['hearingType','Hearing type','text'],['partType','Part type','text'],['retainerAmount','Retainer amount','number'],['retainerPaidDate','Retainer paid date','date'],['setFine','Set fine','number'],['victimSurcharge','Victim surcharge','number'],['disbursements','Disbursements','number'],['outcome','Outcome','text'],['reducedCharge','Reduced charge','text'],['courtFineAmount','Court fine (CAD)','number'],['demeritPoints','Demerit points','number'],['closedDate','Closed date','date'],['assignedTo','Assigned to','text']].map(([key, label, type]) => <div className="form-field" key={key}><label className="form-label">{label}</label><input className="field" type={type} data-testid={`input-edit-${key}`} value={form[key] || ''} onChange={(e) => setField(key, e.target.value)} /></div>)}<div className="form-field"><label className="form-label">Speed unit</label><select className="select" value={form.speedUnit || 'km/h'} onChange={(e) => setField('speedUnit', e.target.value)}><option>km/h</option><option>mph</option></select></div><div className="form-field"><label className="form-label">Licence suspended</label><select className="select" value={form.licenceSuspended || ''} onChange={(e) => setField('licenceSuspended', e.target.value)}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></div><div className="form-field"><label className="form-label">Priority</label><select className="select" value={form.priority || 'Normal'} onChange={(e) => setField('priority', e.target.value)}>{['Low', 'Normal', 'High', 'Urgent'].map((p) => <option key={p}>{p}</option>)}</select></div><div className="form-field full"><label className="form-label">Tags <span className="muted">(comma separated)</span></label><input className="field" value={form.tags || ''} onChange={(e) => setField('tags', e.target.value)} /></div><div className="form-field"><label className="form-label">Disclosure requested</label><input className="field" type="date" value={form.disclosureRequestedDate || ''} onChange={(e) => setField('disclosureRequestedDate', e.target.value)} /></div><div className="form-field"><label className="form-label">Disclosure received</label><input className="field" type="date" value={form.disclosureReceivedDate || ''} onChange={(e) => setField('disclosureReceivedDate', e.target.value)} /></div></div></details></div>{update.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 13 }}>Could not save changes.</div>}</section> : null}
     <div className="detail-grid"><div className="stack"><section className="card detail-card"><div className="section-head"><div><div className="section-title">Matter details</div><div className="section-kicker">The facts you need at a glance.</div></div><ClipboardList size={18} className="muted" /></div><div className="form-grid"><div><div className="form-label">Offence</div><div style={{ fontSize: 13, marginTop: 5 }}>{item.offenceDescription || 'Not provided'}</div></div><div><div className="form-label">Statute</div><div className="mono" style={{ marginTop: 5 }}>{item.statuteCode || '—'}</div></div><div><div className="form-label">Court location</div><div style={{ fontSize: 13, marginTop: 5 }}>{item.courtLocation || 'Not provided'}</div></div><div><div className="form-label">Next follow-up</div><div style={{ fontSize: 13, marginTop: 5, color: 'hsl(var(--accent))' }}>{dateLabel(item.nextFollowUpDate)}</div></div><div><div className="form-label">Intake date</div><div className="mono" style={{ marginTop: 5 }}>{dateLabel(item.intakeDate)}</div></div><div><div className="form-label">Last updated</div><div className="mono" style={{ marginTop: 5 }}>{dateLabel(item.updatedAt)}</div></div>{([['Officer', item.officerName || ''], ['Badge number', item.officerBadgeNumber || ''], ['Issuing agency', item.citationIssuingAgency || ''], ['Response deadline', item.responseDeadline ? dateLabel(item.responseDeadline) : ''], ['Offence date', item.offenceDate ? dateLabel(item.offenceDate) : ''], ['Court file no.', item.courtFileNumber || ''], ['Hearing', [item.hearingType, item.courtRoomNumber, item.courtJurisdiction].filter(Boolean).join(' · ')]] as [string, string][]).filter(([, value]) => value).map(([label, value]) => <div key={label}><div className="form-label">{label}</div><div className="mono" style={{ fontSize: 12, marginTop: 5 }}>{value}</div></div>)}</div></section>
 
@@ -1320,6 +1468,11 @@ function CaseDetailPage() {
           <button className="button button-primary" data-testid="button-add-court-date" disabled={!courtForm.date || courtDate.isPending} onClick={addCourtDate} style={{ marginTop: 12 }}>{courtDate.isPending ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />} Add court date</button>
           {courtDate.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 8 }}>Court date was not saved.</div>}
         </div>
+      </section>
+
+      {/* ── APPOINTMENTS ── */}
+      <section className="card detail-card" data-testid="section-appointments">
+        <CaseAppointmentsPanel caseId={id} clientId={item?.clientId} clientName={item?.clientName} />
       </section>
 
       {/* ── DOCUMENTS ── */}
@@ -1474,7 +1627,7 @@ function CaseDetailPage() {
       </section>
 
       <section className="card detail-card"><div className="section-head"><div><div className="section-title">Activity timeline</div><div className="section-kicker">Notes, payments, and appearances in one thread.</div></div><Activity size={18} className="muted" /></div>{timeline.length ? <div className="timeline">{timeline.map((entry) => <div className="timeline-item" key={entry.key}><div className="timeline-dot" /><div className="timeline-date">{dateLabel(entry.date)}</div><div className="timeline-title">{entry.title}{entry.kind === 'note' && entry.clientVisible ? <span className="pill pill-shared" style={{ marginLeft: 6 }}>CLIENT</span> : null}{entry.payment?.isVoided ? <span className="pill pill-void" style={{ marginLeft: 6 }}>VOID</span> : entry.payment?.isRefund ? <span className="pill pill-refund" style={{ marginLeft: 6 }}>REFUND</span> : null}{entry.payment && !entry.payment.isVoided && !entry.payment.isRefund ? <span className="pill pill-default" style={{ marginLeft: 6 }}>{entry.payment.allocationType}</span> : null}</div><div className="timeline-copy">{entry.copy}</div>{entry.kind === 'note' ? <div style={{ display: 'flex', gap: 6, marginTop: 7 }}><button className="button button-ghost" style={{ minHeight: 24, padding: '0 8px', fontSize: 11 }} data-testid={`button-edit-note-${entry.noteId}`} onClick={() => editNote(entry.noteId, entry.text)}><PenLine size={12} /> Edit</button><button className="button button-danger" style={{ minHeight: 24, padding: '0 8px' }} data-testid={`button-delete-note-${entry.noteId}`} onClick={() => deleteNote(entry.noteId)}><Trash2 size={12} /></button></div> : null}{entry.kind === 'payment' && entry.payment && !entry.payment.isVoided && !entry.payment.isRefund ? <div style={{ display: 'flex', gap: 6, marginTop: 7 }}><button className="button button-ghost" style={{ minHeight: 24, padding: '0 8px', fontSize: 11 }} data-testid={`button-void-payment-${entry.payment.id}`} onClick={() => voidPay(entry.payment!.id, entry.payment!.amount)}><X size={12} /> Void</button><button className="button button-ghost" style={{ minHeight: 24, padding: '0 8px', fontSize: 11 }} data-testid={`button-refund-payment-${entry.payment.id}`} onClick={() => refundPay(entry.payment!.id, entry.payment!.amount)}><Receipt size={12} /> Refund</button></div> : null}</div>)}</div> : <EmptyState title="No activity yet" copy="Add the first note or payment to start the case history." />}</section></div>
-      <div className="stack"><section className="card detail-card"><div className="section-title">Record a payment</div><div className="section-kicker">Keep the ledger current.</div><div className="mini-form"><div className="form-field"><label className="form-label">Amount (CAD)</label><input className="field" type="number" min="0.01" data-testid="input-payment-amount" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="250" /></div><div className="form-grid" style={{ marginTop: 12 }}><div className="form-field"><label className="form-label">Date</label><input className="field" type="date" data-testid="input-payment-date" value={paymentForm.date} onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })} /></div><div className="form-field"><label className="form-label">Method</label><select className="select" data-testid="select-payment-method" value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}><option>E-transfer</option><option>Cash</option><option>Card</option><option>Cheque</option><option>Other</option></select></div></div><div className="form-grid" style={{ marginTop: 12 }}><div className="form-field"><label className="form-label">Allocation</label><select className="select" data-testid="select-payment-allocation" value={paymentForm.allocationType} onChange={(e) => setPaymentForm({ ...paymentForm, allocationType: e.target.value })}><option>Installment</option><option>Retainer</option><option>Final Payment</option><option>Disbursement</option><option>General</option></select></div><div className="form-field"><label className="form-label">Received by</label><input className="field" data-testid="input-payment-received-by" value={paymentForm.receivedBy} onChange={(e) => setPaymentForm({ ...paymentForm, receivedBy: e.target.value })} placeholder="Front desk" /></div></div><input className="field" style={{ marginTop: 12 }} data-testid="input-payment-reference" value={paymentForm.reference} onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} placeholder="Reference / transaction no. (optional)" /><input className="field" style={{ marginTop: 12 }} data-testid="input-payment-note" value={paymentForm.note} onChange={(e) => setPaymentForm({ ...paymentForm, note: e.target.value })} placeholder="Optional note" /><button className="button button-primary" data-testid="button-record-payment" disabled={payment.isPending || !paymentForm.amount} onClick={addPayment}>{payment.isPending ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />} Record payment</button>{payment.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 8 }}>Payment was not recorded.</div>}</div></section><section className="card detail-card"><div className="section-title">Add a note</div><div className="section-kicker">Leave a clear breadcrumb for future you.</div><div className="mini-form"><textarea className="textarea" data-testid="input-case-note" value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="e.g. Client sent disclosure by email…" /><label className="check-row" data-testid="label-note-client-visible"><input type="checkbox" data-testid="checkbox-note-client-visible" checked={noteVisible} onChange={(e) => setNoteVisible(e.target.checked)} /><span>Share with client — appears on their portal page</span></label><button className="button button-primary" data-testid="button-add-note" disabled={note.isPending || !noteText.trim()} onClick={addNote}>{note.isPending ? <Loader2 className="animate-spin" size={15} /> : <NotebookPen size={15} />} Add note</button>{note.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 8 }}>Note was not added.</div>}</div></section></div>
+      <div className="stack"><section className="card detail-card"><div className="section-title">Record a payment</div><div className="section-kicker">Amount, method and who received it are required — a receipt number is issued automatically.</div><div className="mini-form"><div className="form-field"><label className="form-label">Amount (CAD)</label><input className="field" type="number" min="0.01" data-testid="input-payment-amount" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} placeholder="250" /></div><div className="form-grid" style={{ marginTop: 12 }}><div className="form-field"><label className="form-label">Date</label><input className="field" type="date" data-testid="input-payment-date" value={paymentForm.date} onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })} /></div><div className="form-field"><label className="form-label">Method</label><select className="select" data-testid="select-payment-method" value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}><option>E-transfer</option><option>Cash</option><option>Card</option><option>Cheque</option><option>Money order</option><option>Wire</option><option>Other</option></select></div></div><div className="form-grid" style={{ marginTop: 12 }}><div className="form-field"><label className="form-label">Allocation</label><select className="select" data-testid="select-payment-allocation" value={paymentForm.allocationType} onChange={(e) => setPaymentForm({ ...paymentForm, allocationType: e.target.value })}><option>Installment</option><option>Retainer</option><option>Final Payment</option><option>Disbursement</option><option>General</option></select></div><div className="form-field"><label className="form-label">Received by <span className="muted">(required)</span></label><input className="field" data-testid="input-payment-received-by" value={paymentForm.receivedBy} onChange={(e) => setPaymentForm({ ...paymentForm, receivedBy: e.target.value })} placeholder="Who handled the money?" /><div className="muted" style={{ fontSize: 10, marginTop: 5 }}>Printed on the receipt and counted in the day book.</div></div></div><input className="field" style={{ marginTop: 12 }} data-testid="input-payment-reference" value={paymentForm.reference} onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} placeholder="Reference / transaction no. (optional)" /><input className="field" style={{ marginTop: 12 }} data-testid="input-payment-note" value={paymentForm.note} onChange={(e) => setPaymentForm({ ...paymentForm, note: e.target.value })} placeholder="Optional note" /><button className="button button-primary" data-testid="button-record-payment" disabled={payment.isPending || !paymentForm.amount || !paymentForm.receivedBy.trim()} onClick={addPayment}>{payment.isPending ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />} Record payment</button>{payment.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 8 }} data-testid="error-record-payment">{apiErrorText(payment.error, 'Payment was not recorded.')}</div>}{!payment.isError && lastReceipt && <div style={{ color: 'hsl(var(--chart-2))', fontSize: 11, marginTop: 8 }} data-testid="text-payment-receipt">Receipt {lastReceipt} issued.</div>}</div></section><section className="card detail-card"><div className="section-title">Add a note</div><div className="section-kicker">Leave a clear breadcrumb for future you.</div><div className="mini-form"><textarea className="textarea" data-testid="input-case-note" value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="e.g. Client sent disclosure by email…" /><label className="check-row" data-testid="label-note-client-visible"><input type="checkbox" data-testid="checkbox-note-client-visible" checked={noteVisible} onChange={(e) => setNoteVisible(e.target.checked)} /><span>Share with client — appears on their portal page</span></label><button className="button button-primary" data-testid="button-add-note" disabled={note.isPending || !noteText.trim()} onClick={addNote}>{note.isPending ? <Loader2 className="animate-spin" size={15} /> : <NotebookPen size={15} />} Add note</button>{note.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 8 }}>Note was not added.</div>}</div></section></div>
     </div>
   </>;
 }
@@ -1502,6 +1655,7 @@ function ClientDetailPage() {
   const issuePortal = useCreatePortalLink();
   const revokePortal = useRevokePortalLink();
   const emailPortal = useSendPortalEmail();
+  const recordConflictCheck = useRecordClientConflictCheck();
   const [copiedPortal, setCopiedPortal] = useState(false);
   const [emailFeedback, setEmailFeedback] = useState('');
   const portalUrl = clientQuery.data?.portalToken ? `${window.location.origin}${basePath}/portal/${clientQuery.data.portalToken}` : '';
@@ -1577,6 +1731,16 @@ function ClientDetailPage() {
     });
   };
 
+  const markConflictChecked = () => {
+    // There is no session user on the API, so the name is asked for and kept
+    // optional - the date is the part that matters for the trail.
+    const who = window.prompt('Who is recording this conflict check? (optional)', '');
+    if (who === null) return;
+    recordConflictCheck.mutate({ id, checkedBy: who.trim() || undefined }, {
+      onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetClientQueryKey(id) }); },
+    });
+  };
+
   return <>
     <div className="detail-hero">
       <div>
@@ -1644,6 +1808,34 @@ function ClientDetailPage() {
               <div style={{ fontSize: 13, marginTop: 6 }}>{client.leadSourceDetail || '—'}</div>
             </div>
           </div>
+        </section>
+
+        {/* Conflict screening trail */}
+        <section className="card detail-card" data-testid="section-conflict-check">
+          <div className="section-head">
+            <div><div className="section-title">Conflict check</div><div className="section-kicker">When this client was last screened against existing files for duplicates or a shared incident.</div></div>
+            <ShieldAlert size={18} className="muted" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {client.conflictCheckedAt ? (
+              <div style={{ fontSize: 13 }} data-testid="value-conflict-checked">
+                Last checked <strong>{dateLabel(client.conflictCheckedAt)}</strong>
+                {client.conflictCheckedBy ? <> by <strong>{client.conflictCheckedBy}</strong></> : null}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: 'hsl(var(--muted-foreground))' }} data-testid="value-conflict-not-checked">
+                No conflict screening recorded yet.
+              </div>
+            )}
+            <div style={{ flex: 1 }} />
+            <Link href={`/conflict-check?q=${encodeURIComponent(client.fullName)}`} className="button button-ghost" style={{ textDecoration: 'none' }} data-testid="link-open-conflict-checker">
+              <Search size={14} /> Open checker
+            </Link>
+            <button className="button button-accent" data-testid="button-mark-conflict-checked" disabled={recordConflictCheck.isPending} onClick={markConflictChecked}>
+              {recordConflictCheck.isPending ? <Loader2 className="animate-spin" size={15} /> : <ShieldCheck size={15} />} Mark checked
+            </button>
+          </div>
+          {recordConflictCheck.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 10 }}>The check could not be recorded. Try again.</div>}
         </section>
 
         {/* Client portal access */}
@@ -1728,14 +1920,350 @@ function ReportList({ title, copy, rows }: { title: string; copy: string; rows: 
   return <section className="card"><div style={{ padding: '18px 18px 2px' }}><div className="section-title">{title}</div><div className="section-kicker">{copy}</div></div><div className="report-list">{rows.length ? rows.map((row) => <div className="report-line" key={row.label}><div className="report-line-label">{row.label}</div><div className="report-bar"><span style={{ width: `${Math.max(7, row.count / max * 100)}%` }} /></div><div className="report-line-value">{row.count}</div></div>) : <EmptyState title="No report data" copy="There isn't enough activity to show this breakdown yet." />}</div></section>;
 }
 
+// ─── Reporting ───────────────────────────────────────────────────────────────
+type ReportPeriodKey = 'thisMonth' | 'lastMonth' | 'last3' | 'ytd' | 'last12';
+
+const REPORT_PERIODS: { key: ReportPeriodKey; label: string }[] = [
+  { key: 'thisMonth', label: 'This month' },
+  { key: 'lastMonth', label: 'Last month' },
+  { key: 'last3', label: 'Last 3 months' },
+  { key: 'ytd', label: 'Year to date' },
+  { key: 'last12', label: 'Last 12 months' },
+];
+
+const toIsoDay = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+// Chart axis money in thousands, but never two ticks that read the same: a plain
+// round(x/1000) prints "$1k" twice on a $2,500 axis and looks like a bug.
+function axisMoney(value: number): string {
+  if (Math.abs(value) < 1000) return `$${Math.round(value)}`;
+  return `$${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
+}
+
+// Month boundaries are cut in the firm's own timezone, not UTC — a Toronto
+// practice that flips its reporting month at 8pm on the last day is wrong.
+function reportRange(key: ReportPeriodKey): { from: string; to: string } {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  switch (key) {
+    case 'thisMonth': return { from: toIsoDay(new Date(year, month, 1)), to: toIsoDay(now) };
+    case 'lastMonth': return { from: toIsoDay(new Date(year, month - 1, 1)), to: toIsoDay(new Date(year, month, 0)) };
+    case 'last3':     return { from: toIsoDay(new Date(year, month - 2, 1)), to: toIsoDay(now) };
+    case 'ytd':       return { from: toIsoDay(new Date(year, 0, 1)), to: toIsoDay(now) };
+    default:          return { from: toIsoDay(new Date(year, month - 11, 1)), to: toIsoDay(now) };
+  }
+}
+
+// Column order for the day book. Only buckets that actually hold money in the
+// selected period get a column, so a cash-only practice sees a narrow sheet.
+const DAYBOOK_METHODS = ['Cash', 'Cheque', 'E-transfer', 'Card', 'Wire', 'Money order', 'Other'];
+
+function ReportBucketRow({ label, amount, count, max, color }: { label: string; amount: number; count: number; max: number; color?: string }) {
+  return (
+    <div className="report-line">
+      <div className="report-line-label">{label}<span className="muted" style={{ marginLeft: 7, fontSize: 10 }}>{count} {count === 1 ? 'file' : 'files'}</span></div>
+      <div className="report-bar" style={{ width: 130 }}><span style={{ width: `${max > 0 ? Math.max(2, (amount / max) * 100) : 0}%`, background: color }} /></div>
+      <div className="report-line-value" style={{ minWidth: 84, textAlign: 'right' }}>{money(amount)}</div>
+    </div>
+  );
+}
+
 function Reports() {
-  const reports = useGetReportsSummary({ query: { queryKey: getGetReportsSummaryQueryKey(), staleTime: 30000 } });
-  const exportQuery = useExportOutstanding({ query: { enabled: false, queryKey: getExportOutstandingQueryKey() } });
-  const download = async () => { const result = await exportQuery.refetch(); if (result.data) { const url = URL.createObjectURL(new Blob([result.data], { type: 'text/csv' })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'outstanding-cases.csv'; anchor.click(); URL.revokeObjectURL(url); } };
-  if (reports.isLoading) return <><PageHeader eyebrow="Reporting" title="Reports" /><LoadingState rows={6} /></>;
-  if (reports.isError || !reports.data) return <><PageHeader eyebrow="Reporting" title="Reports" /><ErrorState onRetry={() => reports.refetch()} /></>;
-  const data = reports.data;
-  return <><PageHeader eyebrow="Reporting / Signal" title="Reports" copy="A practical read on balances, lead sources, and the shape of your book." action={<button className="button button-primary" data-testid="button-export-outstanding" onClick={download} disabled={exportQuery.isFetching}>{exportQuery.isFetching ? <Loader2 className="animate-spin" size={15} /> : <ArrowDownToLine size={15} />} Export outstanding</button>} /><div className="report-grid"><ReportList title="Lead sources" copy="Where new matters originate." rows={data.leadSources || []} /><ReportList title="Referral breakdown" copy="Who is sending work your way." rows={data.referralBreakdown || []} /><ReportList title="Status reporting" copy="Current docket distribution." rows={data.statusCounts || []} /><section className="card"><div style={{ padding: '18px 18px 2px' }}><div className="section-title">Outstanding balances</div><div className="section-kicker">Accounts that still need a close-out.</div></div><div className="attention-list">{data.outstandingCases?.length ? data.outstandingCases.slice(0, 6).map((item) => <Link href={`/cases/${item.id}`} key={item.id} className="attention-row" data-testid={`row-report-outstanding-${item.id}`}><div className="priority-line" /><div><div className="row-title">{item.clientName}</div><div className="row-meta">Case #{item.caseNumber} · {item.status}</div></div><div className="row-value" style={{ color: 'hsl(var(--accent))' }}>{money(item.balanceOwing)}</div><ArrowRight size={15} className="muted" /></Link>) : <EmptyState title="Nothing outstanding" copy="All balances are settled." />}</div></section></div></>;
+  const [period, setPeriod] = useState<ReportPeriodKey>('last12');
+  const range = useMemo(() => reportRange(period), [period]);
+  const analytics = useGetReportsAnalytics(range, { query: { queryKey: getGetReportsAnalyticsQueryKey(range), staleTime: 30000 } });
+  // Lead sources stay all-time — that is how acquisition reads, and the overview
+  // page shares the same cached response.
+  const summary = useGetReportsSummary({ query: { queryKey: getGetReportsSummaryQueryKey(), staleTime: 60000 } });
+  const agingCsv = useExportReport({ report: 'aging', ...range }, { query: { enabled: false, queryKey: getExportReportQueryKey({ report: 'aging', ...range }) } });
+  const revenueCsv = useExportReport({ report: 'revenue', ...range }, { query: { enabled: false, queryKey: getExportReportQueryKey({ report: 'revenue', ...range }) } });
+  const collectionsCsv = useExportReport({ report: 'collections', ...range }, { query: { enabled: false, queryKey: getExportReportQueryKey({ report: 'collections', ...range }) } });
+  const earningsCsv = useExportReport({ report: 'earnings', ...range }, { query: { enabled: false, queryKey: getExportReportQueryKey({ report: 'earnings', ...range }) } });
+  const cashflowQuery = useGetReportCollections(range, { query: { queryKey: getGetReportCollectionsQueryKey(range), staleTime: 30000 } });
+
+  const download = async (which: 'aging' | 'revenue' | 'collections' | 'earnings') => {
+    const query = which === 'aging' ? agingCsv : which === 'revenue' ? revenueCsv : which === 'collections' ? collectionsCsv : earningsCsv;
+    const result = await query.refetch();
+    if (!result.data) return;
+    const url = URL.createObjectURL(new Blob([result.data], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `docketline-${which}-${range.from}-to-${range.to}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const header = (
+    <PageHeader
+      eyebrow="Reporting"
+      title="Reports"
+      copy="Receivables, cash flow and resolution results for the period you pick."
+      action={<>
+        <button className="button button-ghost" data-testid="button-export-aging" onClick={() => download('aging')} disabled={agingCsv.isFetching}>{agingCsv.isFetching ? <Loader2 className="animate-spin" size={15} /> : <ArrowDownToLine size={15} />} Aging CSV</button>
+        <button className="button button-primary" data-testid="button-export-revenue" onClick={() => download('revenue')} disabled={revenueCsv.isFetching}>{revenueCsv.isFetching ? <Loader2 className="animate-spin" size={15} /> : <ArrowDownToLine size={15} />} Revenue CSV</button>
+      </>}
+    />
+  );
+
+  const periodBar = (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+      <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }} data-testid="group-report-period">
+        {REPORT_PERIODS.map((option) => (
+          <button
+            key={option.key}
+            className={`button ${period === option.key ? 'button-primary' : 'button-ghost'}`}
+            data-testid={`button-period-${option.key}`}
+            onClick={() => setPeriod(option.key)}
+            style={{ minHeight: 30, padding: '0 11px', fontSize: 11 }}
+          >{option.label}</button>
+        ))}
+      </div>
+      <span className="muted" style={{ fontSize: 11, fontFamily: 'var(--app-font-mono)' }}>{dateLabel(range.from)} → {dateLabel(range.to)}</span>
+    </div>
+  );
+
+  if (analytics.isLoading) return <>{header}{periodBar}<LoadingState rows={6} /></>;
+  if (analytics.isError || !analytics.data) return <>{header}{periodBar}<ErrorState onRetry={() => analytics.refetch()} /></>;
+
+  const data = analytics.data;
+  const cashflow = cashflowQuery.data;
+  const methodColumns = DAYBOOK_METHODS.filter((method) => (cashflow?.byDay ?? []).some((day) => (day.methods[method] ?? 0) !== 0));
+  const bucketMax = Math.max(...data.aging.buckets.map((bucket) => bucket.amount), 1);
+  const shape = summary.data;
+
+  return <>
+    {header}
+    {periodBar}
+
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }} data-testid="group-report-caseload">
+      <span className="pill">{data.caseload.total} matters</span>
+      <span className="pill">{data.caseload.open} open</span>
+      <span className="pill">{data.caseload.closed} closed</span>
+      <span className="pill">{data.caseload.openedInPeriod} opened in period</span>
+      <span className="pill">{data.caseload.closedInPeriod} resolved in period</span>
+    </div>
+
+    <div className="stat-grid" style={{ marginBottom: 18 }}>
+      <div className="card stat-card">
+        <div className="stat-label">Collected</div>
+        <div className="stat-value" data-testid="value-report-collected">{money(data.money.collected)}</div>
+        <div className="stat-foot">Receipts dated in this period</div>
+      </div>
+      <div className="card stat-card">
+        <div className="stat-label">Written</div>
+        <div className="stat-value" data-testid="value-report-written">{money(data.money.written)}</div>
+        <div className="stat-foot">Fees + disbursements on {data.caseload.openedInPeriod} new {data.caseload.openedInPeriod === 1 ? 'file' : 'files'}</div>
+      </div>
+      <div className="card stat-card">
+        <div className="stat-label">Outstanding</div>
+        <div className="stat-value" data-testid="value-report-outstanding" style={{ color: data.money.outstanding > 0 ? 'hsl(var(--accent))' : 'hsl(var(--chart-2))' }}>{money(data.money.outstanding)}</div>
+        <div className="stat-foot">{data.aging.count} {data.aging.count === 1 ? 'file' : 'files'}{data.money.outstandingOnClosed > 0 ? ` · ${money(data.money.outstandingOnClosed)} on closed files` : ''}</div>
+      </div>
+      <div className="card stat-card">
+        <div className="stat-label">Collection rate</div>
+        <div className="stat-value" data-testid="value-report-collection-rate">{data.money.collectionRate}%</div>
+        <div className="stat-foot">Lifetime {money(data.money.collectedAllTime)} of {money(data.money.billedAllTime)}</div>
+      </div>
+    </div>
+
+    {cashflow ? <>
+      <section className="card" style={{ marginBottom: 18 }} data-testid="section-report-earnings">
+        <div className="section-head" style={{ padding: '18px 18px 0', marginBottom: 14 }}>
+          <div><div className="section-title">Earnings</div><div className="section-kicker">Cash you kept: receipts dated in this period, less the expenses dated in it.</div></div>
+          <button className="button button-ghost" data-testid="button-export-earnings" onClick={() => download('earnings')} disabled={earningsCsv.isFetching}>{earningsCsv.isFetching ? <Loader2 className="animate-spin" size={15} /> : <ArrowDownToLine size={15} />} Earnings CSV</button>
+        </div>
+        <div className="money-band" style={{ margin: '0 18px 18px' }}>
+          <div className="money-cell"><div className="money-label">Cash in</div><div className="money-value" data-testid="value-earnings-cash-in">{money(cashflow.earnings.cashIn)}</div></div>
+          <div className="money-cell"><div className="money-label">Expenses</div><div className="money-value" data-testid="value-earnings-expenses">{money(cashflow.earnings.expenses)}</div></div>
+          <div className="money-cell"><div className="money-label">Net cash</div><div className="money-value" data-testid="value-earnings-net" style={{ color: cashflow.earnings.netCash >= 0 ? 'hsl(var(--chart-2))' : 'hsl(var(--accent))' }}>{money(cashflow.earnings.netCash)}</div></div>
+          <div className="money-cell"><div className="money-label">HST input credit</div><div className="money-value" data-testid="value-earnings-hst">{money(cashflow.earnings.hstInputCredit)}</div></div>
+          <div className="money-cell"><div className="money-label">Unbilled</div><div className="money-value" data-testid="value-earnings-unbilled">{money(cashflow.earnings.unbilled)}</div></div>
+        </div>
+        {cashflow.earnings.byCategory.length > 0 && (
+          <div className="report-list" style={{ paddingTop: 0 }}>
+            <div className="section-kicker" style={{ marginBottom: 2 }}>Biggest expense categories in this period</div>
+            {cashflow.earnings.byCategory.slice(0, 4).map((row) => (
+              <div className="report-line" key={row.label} data-testid={`row-earnings-category-${row.label}`}>
+                <div className="report-line-label">{row.label}</div>
+                <div className="report-line-value">{money(row.amount)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ padding: '0 18px 16px' }}><div className="muted" style={{ fontSize: 10.5, lineHeight: 1.5 }}>HST input credit assumes expenses are HST-inclusive at 13%. Unbilled is all-time disbursements never invoiced — money already spent that no invoice has recovered.</div></div>
+      </section>
+
+      <section className="card table-card" style={{ marginBottom: 18 }} data-testid="section-report-daybook">
+        <div className="section-head" style={{ padding: '18px 18px 0', marginBottom: 10 }}>
+          <div><div className="section-title">Day book</div><div className="section-kicker">Every receipt by the day it landed — the sheet you reconcile against the bank.</div></div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {cashflow.voidedCount > 0 && <span className="pill" data-testid="pill-daybook-voided" style={{ color: 'hsl(var(--accent))' }}>{cashflow.voidedCount} voided</span>}
+            <button className="button button-ghost" data-testid="button-export-collections" onClick={() => download('collections')} disabled={collectionsCsv.isFetching}>{collectionsCsv.isFetching ? <Loader2 className="animate-spin" size={15} /> : <ArrowDownToLine size={15} />} Day book CSV</button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '0 18px 12px' }} data-testid="group-daybook-totals">
+          <span className="pill">{cashflow.totals.count} receipts</span>
+          <span className="pill">{money(cashflow.totals.gross)} in</span>
+          {cashflow.totals.refundCount > 0 && <span className="pill">{money(cashflow.totals.refunds)} refunded</span>}
+          <span className="pill">Net {money(cashflow.totals.net)}</span>
+        </div>
+        {cashflow.byDay.length === 0 ? <EmptyState title="No receipts in this period" copy="Record a payment on a case and it appears here the same day." /> : <>
+          <div className="table-scroll">
+            <table className="data-table" data-testid="table-report-daybook" style={{ minWidth: methodColumns.length > 3 ? 840 : 600 }}>
+              <thead><tr><th>Date</th>{methodColumns.map((method) => <th key={method}>{method}</th>)}<th>Refunds</th><th>Net</th><th>Receipts</th></tr></thead>
+              <tbody>
+                {[...cashflow.byDay].sort((a, b) => b.date.localeCompare(a.date)).map((day) => (
+                  <tr key={day.date} data-testid={`row-daybook-${day.date}`}>
+                    <td className="mono">{dateLabel(day.date)}</td>
+                    {methodColumns.map((method) => <td key={method} className="mono" style={{ color: day.methods[method] ? undefined : 'hsl(var(--muted-foreground))' }}>{day.methods[method] ? money(day.methods[method]) : '—'}</td>)}
+                    <td className="mono" style={{ color: day.refunds ? 'hsl(var(--accent))' : undefined }}>{day.refunds ? money(day.refunds) : '—'}</td>
+                    <td className="mono" style={{ fontWeight: 700 }}>{money(day.net)}</td>
+                    <td className="mono">{day.count || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {cashflow.byStaff.length > 0 && <>
+            <div className="section-divider" style={{ margin: '0 18px 6px' }} />
+            <div style={{ padding: '4px 18px 6px' }}><div className="section-title" style={{ fontSize: 13 }}>By person</div></div>
+            <div className="report-list">
+              {cashflow.byStaff.map((row) => (
+                <div className="report-line" key={row.label} data-testid={`row-staff-${row.label}`}>
+                  <div className="report-line-label">{row.label}<span className="muted" style={{ marginLeft: 7, fontSize: 10 }}>{row.count} {row.count === 1 ? 'receipt' : 'receipts'}</span></div>
+                  <div className="report-line-value">{money(row.amount)}</div>
+                </div>
+              ))}
+            </div>
+          </>}
+        </>}
+      </section>
+    </> : <section className="card" style={{ marginBottom: 18 }}><LoadingState rows={3} /></section>}
+
+    <div className="detail-grid" style={{ marginBottom: 18 }}>
+      <section className="card" style={{ padding: 22 }} data-testid="section-report-revenue">
+        <div className="section-head" style={{ marginBottom: 12 }}>
+          <div><div className="section-title">Collected vs written</div><div className="section-kicker">Cash received against the fee value of files opened, by month.</div></div>
+          <span className="pill">{data.period.months} mo</span>
+        </div>
+        <div style={{ height: 248 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart key={`${data.period.from}:${data.period.to}`} data={data.money.byMonth} barGap={3} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+              <YAxis tickLine={false} axisLine={false} width={58} tick={{ fontSize: 10 }} tickFormatter={axisMoney} />
+              <Tooltip content={<ChartTooltip money />} cursor={{ fill: 'hsl(var(--accent) / .06)' }} />
+              <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+              <Bar dataKey="written" name="Written" fill="#3d5e82" radius={[4, 4, 0, 0]} maxBarSize={24} />
+              <Bar dataKey="collected" name="Collected" fill="#2e8f7b" radius={[4, 4, 0, 0]} maxBarSize={24} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      <section className="card" style={{ padding: 22 }} data-testid="section-report-resolutions">
+        <div className="section-title">Resolution results</div>
+        <div className="section-kicker" style={{ marginBottom: 16 }}>How resolved matters ended — the record referral sources ask about.</div>
+        {data.outcomes.resolved === 0 ? <EmptyState title="No outcomes recorded" copy="Record the outcome when a case closes and this fills in." /> : <>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <div style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, fontSize: 34, letterSpacing: '-.04em' }} data-testid="value-report-favourable-rate">{data.outcomes.favourableRate}%</div>
+            <div className="muted" style={{ fontSize: 11, lineHeight: 1.5 }}>favourable<br />{data.outcomes.favourable} of {data.outcomes.resolved} resolved</div>
+          </div>
+          <div className="status-bar-track" style={{ marginTop: 14 }}>
+            <div className="status-bar-fill" style={{ width: `${Math.min(100, data.outcomes.favourableRate)}%`, background: 'hsl(var(--chart-2))' }} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 16 }}>
+            {data.outcomes.counts.slice(0, 5).map((row) => (
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span className="muted">{row.label}</span>
+                <strong style={{ fontFamily: 'var(--app-font-mono)' }}>{row.count}</strong>
+              </div>
+            ))}
+          </div>
+          <div className="section-divider" style={{ margin: '16px 0 12px' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+            <span className="muted">Charges reduced</span><strong style={{ fontFamily: 'var(--app-font-mono)' }}>{data.outcomes.reduced}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 6 }}>
+            <span className="muted">Resolutions at zero points</span>
+            <strong style={{ fontFamily: 'var(--app-font-mono)' }}>{data.outcomes.noPoints} of {data.outcomes.pointsRecorded} recorded</strong>
+          </div>
+        </>}
+      </section>
+    </div>
+
+    <section className="card" style={{ marginBottom: 18 }} data-testid="section-report-aging">
+      <div className="section-head" style={{ padding: '18px 18px 0', marginBottom: 10 }}>
+        <div><div className="section-title">Receivables aging</div><div className="section-kicker">Aged from the last receipt on each file, or from intake when nothing has been paid.</div></div>
+        <div style={{ textAlign: 'right' }}>
+          <div className="stat-label">Total owing</div>
+          <div style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, fontSize: 18, marginTop: 4, color: data.aging.total > 0 ? 'hsl(var(--accent))' : 'hsl(var(--chart-2))' }}>{money(data.aging.total)}</div>
+        </div>
+      </div>
+      {data.aging.count === 0 ? <EmptyState title="Nothing outstanding" copy="Every file in the book is settled." /> : <>
+        <div className="report-list">
+          {data.aging.buckets.map((bucket, index) => (
+            <ReportBucketRow key={bucket.label} label={bucket.label} amount={bucket.amount} count={bucket.count} max={bucketMax} color={index >= 2 ? 'hsl(var(--accent))' : undefined} />
+          ))}
+        </div>
+        <div className="section-divider" style={{ margin: '0 18px 6px' }} />
+        <div style={{ padding: '4px 18px 6px' }}><div className="section-title" style={{ fontSize: 13 }}>Oldest balances</div></div>
+        <div className="table-scroll">
+          <table className="data-table" data-testid="table-report-aging" style={{ minWidth: 660 }}>
+            <thead><tr><th>Case</th><th>Client</th><th>Status</th><th>Balance</th><th>Last receipt</th><th>Age</th></tr></thead>
+            <tbody>
+              {data.aging.oldest.map((row) => (
+                <tr key={row.caseId} data-testid={`row-aging-${row.caseNumber}`}>
+                  <td><Link href={`/cases/${row.caseId}`} style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, color: 'hsl(var(--accent))', textDecoration: 'none' }}>#{row.caseNumber}</Link></td>
+                  <td>{row.clientName}</td>
+                  <td><StatusPill status={row.status} /></td>
+                  <td style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, color: 'hsl(var(--accent))' }}>{money(row.balanceOwing)}</td>
+                  <td style={{ fontFamily: 'var(--app-font-mono)' }}>{row.lastReceipt ? dateLabel(row.lastReceipt) : <span className="muted">No payment</span>}</td>
+                  <td><span className="pill" style={row.days > 90 ? { background: 'hsl(var(--accent) / .12)', color: 'hsl(var(--accent))' } : undefined}>{row.days} days</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>}
+    </section>
+
+    <div className="report-grid" style={{ marginBottom: 18 }}>
+      <ReportList title="What we handle" copy="Charges by statute code across the book." rows={data.topCharges} />
+      <ReportList title="Where we appear" copy="Court locations with files." rows={data.courts} />
+    </div>
+
+    <div className="report-grid" style={{ marginBottom: 18 }}>
+      <ReportList title="Lead sources" copy="Where new matters originate." rows={shape?.leadSources ?? []} />
+      <ReportList title="Referral breakdown" copy="Who is sending work your way." rows={shape?.referralBreakdown ?? []} />
+    </div>
+
+    {data.workload.length > 0 && (
+      <section className="card table-card" style={{ marginBottom: 18 }} data-testid="section-report-workload">
+        <div className="section-head" style={{ padding: '18px 18px 0', marginBottom: 8 }}>
+          <div><div className="section-title">Workload by assignee</div><div className="section-kicker">Files and money carried by each name on the docket.</div></div>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table" style={{ minWidth: 620 }}>
+            <thead><tr><th>Assignee</th><th>Open</th><th>Closed</th><th>Collected</th><th>Outstanding</th></tr></thead>
+            <tbody>
+              {data.workload.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td style={{ fontFamily: 'var(--app-font-mono)' }}>{row.open}</td>
+                  <td style={{ fontFamily: 'var(--app-font-mono)' }}>{row.closed}</td>
+                  <td style={{ fontFamily: 'var(--app-font-mono)' }}>{money(row.collected)}</td>
+                  <td style={{ fontFamily: 'var(--app-font-mono)', color: row.outstanding > 0 ? 'hsl(var(--accent))' : undefined }}>{money(row.outstanding)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )}
+  </>;
 }
 
 // Legacy import column mapping — keys match the backend's logical field names in getColumn()
@@ -1751,6 +2279,9 @@ const IMPORT_FIELDS: { key: string; label: string; required?: boolean; aliases: 
   { key: 'status', label: 'Status', aliases: ['status', 'Status'] },
   { key: 'rawNote', label: 'Status / payment notes', aliases: ['statusNotes', 'status_notes', 'Notes', 'notes', 'note'] },
 ];
+// Rows per commit request. A legacy sheet can hold 10,000 rows and every row
+// writes a client, a case, a note and possibly receipts, so they go in batches.
+const COMMIT_CHUNK = 250;
 const autoDetectMapping = (csvHeaders: string[]): Record<string, string> => {
   const byLower = new Map(csvHeaders.filter(Boolean).map((header) => [header.toLowerCase(), header]));
   const detected: Record<string, string> = {};
@@ -1771,6 +2302,8 @@ function ImportPage() {
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const parseCsvLine = (line: string): string[] => {
     const values: string[] = [];
     let current = '';
@@ -1812,9 +2345,47 @@ function ImportPage() {
     setResult(null);
     preview.mutate({ data: next });
   };
-  const commitRows = () => { if (!payload) return; const mappingPayload = Object.fromEntries(Object.entries(mapping).filter(([, column]) => column)); commit.mutate({ data: { rows: payload.rows, mapping: Object.keys(mappingPayload).length ? mappingPayload : undefined } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListCasesQueryKey() }); queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }); } }); };
+  const commitRows = async () => {
+    if (!payload) return;
+    const mappingPayload = Object.fromEntries(Object.entries(mapping).filter(([, column]) => column));
+    const total = payload.rows.length;
+    if (!window.confirm(`Add ${total} ${total === 1 ? 'row' : 'rows'} to the live docket?\n\nThis creates clients, cases and receipts immediately and cannot be undone from here.`)) return;
+    const fallbackMapping = Object.keys(mappingPayload).length ? mappingPayload : undefined;
+    let imported = 0;
+    let skipped = 0;
+    setFailure(null);
+    try {
+      // One request per chunk. A legacy sheet of 10,000 rows cannot finish inside
+      // a single request before the platform times out, and each row already
+      // writes several documents, so the work is batched instead.
+      for (let start = 0; start < total; start += COMMIT_CHUNK) {
+        setProgress({ done: start, total });
+        const done = await commit.mutateAsync({ data: { rows: payload.rows.slice(start, start + COMMIT_CHUNK), mapping: fallbackMapping } });
+        imported += done.imported;
+        skipped += done.skipped;
+      }
+    } catch {
+      setProgress(null);
+      setFailure(imported > 0
+        ? `Stopped after ${imported} of ${total} rows. Do not re-run this same file — the first ${imported} would be duplicated. Check the cases list, then import only the remaining rows.`
+        : 'Import failed. No rows were changed.');
+      queryClient.invalidateQueries({ queryKey: getListCasesQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+      return;
+    }
+    setProgress(null);
+    setResult({ imported, skipped });
+    // Clearing the preview and the pasted sheet is what stops the same file being
+    // committed twice: left in place, one click on Preview would arm it again.
+    setPayload(null);
+    setRaw('');
+    preview.reset();
+    queryClient.invalidateQueries({ queryKey: getListCasesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getListClientsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
+  };
   const example = 'clientName,ticketNumber,offenceDate,totalFee,status,notes\nJordan Pereira,T12345678,2024-08-16,1250,Open,pd500 initial\nMina Okafor,T12345991,2024-08-22,980,Awaiting Trial,filed and waiting';
-  return <><PageHeader eyebrow="Migration / One-time" title="Bring in the old docket" copy="Preview your legacy rows before they become part of the system of record." /><div className="import-layout"><section className="card detail-card"><div className="section-title">1. Paste legacy rows</div><div className="section-kicker">CSV exports from Excel work best. Keep the first row as headers. Payment amounts such as pd500, paid 500, or received 500 are extracted automatically; status keywords like filed, withdrawn, or resummoned are detected from notes.</div><textarea className="textarea" data-testid="input-import-csv" style={{ minHeight: 170, marginTop: 18, fontFamily: 'var(--app-font-mono)', fontSize: 10 }} value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={example} /><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 11 }}><button className="button button-ghost" data-testid="button-use-example" onClick={() => setRaw(example)}><FileSpreadsheet size={15} /> Use example</button><button className="button button-accent" data-testid="button-preview-import" disabled={preview.isPending || !raw.trim()} onClick={parse}>{preview.isPending ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />} Preview rows</button></div>{preview.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 12 }}>The preview could not be generated. Check the CSV headers.</div>}</section><section className="card detail-card"><div className="section-title">2. Map columns and commit</div><div className="section-kicker">Columns are auto-detected where headers fit — adjust any assignment before committing.</div>{payload ? <><div className="form-grid" style={{ marginTop: 18 }}>{IMPORT_FIELDS.map((field) => <div className="form-field" key={field.key}><label className="form-label">{field.label}{field.required ? <span className="muted"> *</span> : ''}</label><select className="select" data-testid={`select-map-${field.key}`} value={mapping[field.key] || ''} onChange={(e) => setMapping((current) => ({ ...current, [field.key]: e.target.value }))}><option value="">Not mapped</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></div>)}</div>{!mapping.clientName ? <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 10 }}>Map the client name column — rows without one are skipped.</div> : null}</> : null}{preview.data ? <><div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 18 }}><div className="stat-card" style={{ minHeight: 90 }}><div className="stat-label">Rows detected</div><div className="stat-value" data-testid="value-import-rows">{preview.data.rowCount}</div></div><div className="stat-card" style={{ minHeight: 90 }}><div className="stat-label">Fields mapped</div><div className="stat-value" data-testid="value-import-mapped">{Object.values(mapping).filter(Boolean).length}/{IMPORT_FIELDS.length}</div></div><div className="stat-card" style={{ minHeight: 90 }}><div className="stat-label">Showing sample</div><div className="stat-value">{preview.data.sample.length}</div></div></div><div className="table-scroll" style={{ marginTop: 18 }}><table className="data-table"><thead><tr>{Object.keys(preview.data.sample[0] || {}).slice(0, 5).map((key) => <th key={key}>{key}</th>)}</tr></thead><tbody>{preview.data.sample.map((row, index) => <tr key={index}>{Object.keys(preview.data.sample[0] || {}).slice(0, 5).map((key) => <td key={key} className="mono">{row[key] || '—'}</td>)}</tr>)}</tbody></table></div><button className="button button-primary" data-testid="button-commit-import" style={{ marginTop: 18 }} disabled={commit.isPending} onClick={commitRows}>{commit.isPending ? <Loader2 className="animate-spin" size={15} /> : <Check size={15} />} Commit {preview.data.rowCount} rows</button></> : result ? <div className="empty-state"><div className="empty-icon"><Check size={20} /></div><h3>Import complete</h3><p>{result.imported} rows imported and {result.skipped} skipped. Your register is up to date.</p><button className="button button-ghost" data-testid="button-import-another" onClick={() => { setRaw(''); setPayload(null); setResult(null); setHeaders([]); setMapping({}); }}>Import another file</button></div> : <div className="dropzone" style={{ marginTop: 18 }}><div><Upload /><p>Preview will appear here</p><small>Rows, sample values, and validation status</small></div></div>}{commit.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 12 }}>Import failed. No rows were changed.</div>}{commit.data && !result ? <div className="login-status" data-testid="status-import-success">Imported {commit.data.imported} rows; {commit.data.skipped} skipped.</div> : null}</section></div></>;
+  return <><PageHeader eyebrow="Migration / One-time" title="Bring in the old docket" copy="Preview your legacy rows before they become part of the system of record." /><div className="import-layout"><section className="card detail-card"><div className="section-title">1. Paste legacy rows</div><div className="section-kicker">CSV exports from Excel work best. Keep the first row as headers. Payment amounts such as pd500, paid 500, or received 500 are extracted automatically; status keywords like filed, withdrawn, or resummoned are detected from notes.</div><textarea className="textarea" data-testid="input-import-csv" style={{ minHeight: 170, marginTop: 18, fontFamily: 'var(--app-font-mono)', fontSize: 10 }} value={raw} onChange={(e) => setRaw(e.target.value)} placeholder={example} /><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 11 }}><button className="button button-ghost" data-testid="button-use-example" onClick={() => setRaw(example)}><FileSpreadsheet size={15} /> Use example</button><button className="button button-accent" data-testid="button-preview-import" disabled={preview.isPending || !raw.trim()} onClick={parse}>{preview.isPending ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />} Preview rows</button></div>{preview.isError && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 12 }}>The preview could not be generated. Check the CSV headers.</div>}</section><section className="card detail-card"><div className="section-title">2. Map columns and commit</div><div className="section-kicker">Columns are auto-detected where headers fit — adjust any assignment before committing.</div>{payload ? <><div className="form-grid" style={{ marginTop: 18 }}>{IMPORT_FIELDS.map((field) => <div className="form-field" key={field.key}><label className="form-label">{field.label}{field.required ? <span className="muted"> *</span> : ''}</label><select className="select" data-testid={`select-map-${field.key}`} value={mapping[field.key] || ''} onChange={(e) => setMapping((current) => ({ ...current, [field.key]: e.target.value }))}><option value="">Not mapped</option>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></div>)}</div>{!mapping.clientName ? <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 10 }}>Map the client name column — rows without one are skipped.</div> : null}</> : null}{preview.data ? <><div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 18 }}><div className="stat-card" style={{ minHeight: 90 }}><div className="stat-label">Rows detected</div><div className="stat-value" data-testid="value-import-rows">{preview.data.rowCount}</div></div><div className="stat-card" style={{ minHeight: 90 }}><div className="stat-label">Fields mapped</div><div className="stat-value" data-testid="value-import-mapped">{Object.values(mapping).filter(Boolean).length}/{IMPORT_FIELDS.length}</div></div><div className="stat-card" style={{ minHeight: 90 }}><div className="stat-label">Showing sample</div><div className="stat-value">{preview.data.sample.length}</div></div></div><div className="table-scroll" style={{ marginTop: 18 }}><table className="data-table"><thead><tr>{Object.keys(preview.data.sample[0] || {}).slice(0, 5).map((key) => <th key={key}>{key}</th>)}</tr></thead><tbody>{preview.data.sample.map((row, index) => <tr key={index}>{Object.keys(preview.data.sample[0] || {}).slice(0, 5).map((key) => <td key={key} className="mono">{row[key] || '—'}</td>)}</tr>)}</tbody></table></div><button className="button button-primary" data-testid="button-commit-import" style={{ marginTop: 18 }} disabled={commit.isPending} onClick={commitRows}>{commit.isPending ? <Loader2 className="animate-spin" size={15} /> : <Check size={15} />} {progress ? `Importing ${progress.done} of ${progress.total}…` : `Commit ${preview.data.rowCount} rows`}</button></> : result ? <div className="empty-state"><div className="empty-icon"><Check size={20} /></div><h3>Import complete</h3><p>{result.imported} {result.imported === 1 ? 'row' : 'rows'} imported and {result.skipped} skipped. Your register is up to date.</p><button className="button button-ghost" data-testid="button-import-another" onClick={() => { setRaw(''); setPayload(null); setResult(null); setHeaders([]); setMapping({}); setFailure(null); setProgress(null); }}>Import another file</button></div> : <div className="dropzone" style={{ marginTop: 18 }}><div><Upload /><p>Preview will appear here</p><small>Rows, sample values, and validation status</small></div></div>}{commit.isError && !failure && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 12 }}>Import failed. No rows were changed.</div>}{failure && <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginTop: 12 }} data-testid="status-import-failure">{failure}</div>}{commit.data && !result ? <div className="login-status" data-testid="status-import-success">Imported {commit.data.imported} rows; {commit.data.skipped} skipped.</div> : null}</section></div></>;
 }
 
 function Login() {
@@ -1836,7 +2407,11 @@ function PortalPage() {
     queryKey: ['portal', token],
     queryFn: () => getPortalView(token),
     retry: false,
-    staleTime: 30000,
+    staleTime: 20000,
+    // Clients leave this page open. A new court date or receipt must appear on
+    // its own, without them knowing they have to reload.
+    refetchInterval: 60000,
+    refetchOnWindowFocus: true,
   });
   const downloadDoc = async (documentId: string, name: string) => {
     try {
@@ -1850,17 +2425,123 @@ function PortalPage() {
   if (portal.isLoading) return <PublicShell><div className="portal-card"><LoadingState rows={4} /></div></PublicShell>;
   if (portal.isError || !portal.data) return <PublicShell><div className="portal-card"><EmptyState title="This link is no longer active" copy="Ask your paralegal for a fresh portal link. Links can be revoked or rotated at any time." /></div></PublicShell>;
   const data = portal.data;
+  const nextUp = data.agenda[0] ?? null;
+  const unpaid = data.invoices.filter((invoice) => invoice.status === 'sent');
+  const overdue = unpaid.filter((invoice) => invoice.dueDate < data.today);
+  const openFiles = data.cases.filter((c) => !['closed', 'resolved', 'withdrawn'].includes((c.status || '').toLowerCase())).length;
   return (
     <PublicShell>
       <div className="portal-card" data-testid="section-portal-view">
         <div className="portal-head">
           <div>
-            <div className="eyebrow">Client portal</div>
+            <div className="eyebrow">Client portal{data.firmName ? ` · ${data.firmName}` : ''}</div>
             <h1 className="portal-title">Hello, {data.clientName}</h1>
-            <p className="portal-sub">Here is everything on your files right now. Dates first, then payments and documents.</p>
+            <p className="portal-sub">
+              {data.summary.files === 0 ? 'Your account' : data.summary.files === 1 ? 'Your file' : `Your ${data.summary.files} files`} at a glance — what is scheduled, what has been paid, and every paper our office holds for you.
+            </p>
           </div>
-          <div className="brand-mark" style={{ width: 40, height: 40, fontSize: 13 }}>TT</div>
+          <div className="portal-head-side">
+            <button className="portal-refresh" onClick={() => portal.refetch()} disabled={portal.isFetching} title="Refresh now" data-testid="button-portal-refresh">
+              <RefreshCw size={12} className={portal.isFetching ? 'portal-spin' : undefined} />
+              {portal.isFetching ? 'Updating' : 'Refresh'}
+            </button>
+            <div className="portal-updated" data-testid="text-portal-updated">Updated {timeLabel(data.generatedAt)}</div>
+          </div>
         </div>
+
+        {nextUp ? (
+          <div className="portal-next" data-testid="section-portal-next">
+            <div className="portal-next-icon">{nextUp.kind === 'court' ? <Gavel size={17} /> : <CalendarDays size={17} />}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="portal-next-label">Next up</div>
+              <div className="portal-next-title">{nextUp.title || (nextUp.kind === 'court' ? 'Court appearance' : 'Appointment')}</div>
+              <div className="portal-next-meta">
+                {dateLabel(nextUp.date)}
+                {nextUp.startAt ? ` at ${timeLabel(nextUp.startAt)}` : ''}
+                {nextUp.location ? ` · ${nextUp.location}` : ''}
+                {nextUp.caseNumber ? ` · Case #${nextUp.caseNumber}` : ''}
+              </div>
+            </div>
+            <CountdownBadge date={nextUp.date} />
+          </div>
+        ) : (
+          <div className="portal-next quiet" data-testid="section-portal-next">
+            <div className="portal-next-icon"><CalendarDays size={17} /></div>
+            <div style={{ flex: 1 }}>
+              <div className="portal-next-label">Nothing scheduled</div>
+              <div className="portal-next-meta">No court date or meeting is booked right now. Anything new appears here the moment our office enters it.</div>
+            </div>
+          </div>
+        )}
+
+        <div className="portal-summary" data-testid="section-portal-summary">
+          <div className="portal-sum-cell">
+            <div className="money-label">Balance owing</div>
+            <div className={`money-value${data.summary.balanceOwing > 0 ? ' warn' : ''}`}>{money(data.summary.balanceOwing)}</div>
+            {overdue.length > 0 && <div className="portal-sum-note">{overdue.length} invoice{overdue.length > 1 ? 's' : ''} past due</div>}
+          </div>
+          <div className="portal-sum-cell">
+            <div className="money-label">Paid to date</div>
+            <div className="money-value" style={{ color: 'hsl(var(--chart-2))' }}>{money(data.summary.amountReceived)}</div>
+            <div className="portal-sum-note">{data.summary.creditBalance > 0 ? `${money(data.summary.creditBalance)} in credit` : 'Receipted payments'}</div>
+          </div>
+          <div className="portal-sum-cell">
+            <div className="money-label">Total fees</div>
+            <div className="money-value">{money(data.summary.totalOwed)}</div>
+            <div className="portal-sum-note">Fees and disbursements</div>
+          </div>
+          <div className="portal-sum-cell">
+            <div className="money-label">Files</div>
+            <div className="money-value">{openFiles}<span className="portal-sum-unit">open</span></div>
+            <div className="portal-sum-note">{data.summary.files} in total</div>
+          </div>
+        </div>
+
+        {(unpaid.length > 0 || data.summary.balanceOwing > 0) && (
+          <div className="portal-pay">
+            <Wallet size={14} />
+            <span>
+              {unpaid.length > 0
+                ? `${unpaid.length} invoice${unpaid.length > 1 ? 's are' : ' is'} waiting for payment${overdue.length > 0 ? ` — ${overdue.length} now past due` : ''}.`
+                : 'A balance is still open on your file.'}{' '}
+              To pay, contact {data.firmName || 'our office'} with your case number — every payment is receipted here.
+            </span>
+          </div>
+        )}
+
+        {data.invoices.length > 0 && (
+          <div className="portal-panel" data-testid="section-portal-invoices">
+            <div className="portal-block-title"><ReceiptText size={13} /> Invoices</div>
+            {data.invoices.map((invoice) => {
+              const pastDue = invoice.status === 'sent' && invoice.dueDate < data.today;
+              return (
+                <div className="portal-invoice" key={invoice.id} data-testid={`row-portal-invoice-${invoice.id}`}>
+                  <div className="portal-invoice-head">
+                    <span className="mono" style={{ fontWeight: 700 }}>{invoiceLabel(invoice.invoiceNumber)}</span>
+                    <span className={`pill ${invoice.status === 'paid' ? 'pill-paid' : pastDue ? 'pill-overdue' : 'pill-sent'}`}>
+                      {invoice.status === 'paid' ? 'Paid' : pastDue ? 'Overdue' : 'Due'}
+                    </span>
+                    {invoice.caseNumber ? <span className="muted" style={{ fontSize: 10.5 }}>Case #{invoice.caseNumber}</span> : null}
+                    <span className="mono portal-invoice-total">{money(invoice.total)}</span>
+                  </div>
+                  <div className="portal-invoice-meta">
+                    Issued {dateLabel(invoice.issueDate)} · {invoice.status === 'paid' ? `paid ${dateLabel(invoice.paidAt)}` : `due ${dateLabel(invoice.dueDate)}`}
+                  </div>
+                  {invoice.items.length > 0 && (
+                    <div className="portal-invoice-items">
+                      {invoice.items.map((item, i) => (
+                        <div className="portal-invoice-item" key={i}>
+                          <span>{item.description}{item.quantity > 1 ? ` × ${item.quantity}` : ''}</span>
+                          <span className="mono">{money(item.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
         {data.cases.length === 0 ? (
           <EmptyState title="No open files" copy="When your paralegal opens a matter for you, it will appear here." />
         ) : data.cases.map((c) => (
@@ -1872,33 +2553,75 @@ function PortalPage() {
               </div>
               <StatusPill status={c.status} />
             </div>
-            <div className="money-band">
-              <div className="money-cell"><div className="money-label">Total fee</div><div className="money-value">{money(c.totalFee)}</div></div>
-              <div className="money-cell"><div className="money-label">Paid</div><div className="money-value" style={{ color: 'hsl(var(--chart-2))' }}>{money(c.amountReceived)}</div></div>
-              <div className="money-cell"><div className="money-label">Balance</div><div className={`money-value${c.balanceOwing > 0 ? ' warn' : ''}`}>{money(c.balanceOwing)}</div></div>
+            {(() => {
+              const next = data.agenda.find((item) => item.caseId === c.id);
+              if (!next) return null;
+              return (
+                <div className="portal-case-next" data-testid={`portal-next-${c.id}`}>
+                  <CalendarClock size={13} />
+                  <span className="portal-case-next-text">
+                    <strong>{dateLabel(next.date)}{next.startAt ? ` at ${timeLabel(next.startAt)}` : ''}</strong>
+                    {next.location ? ` · ${next.location}` : ''}
+                  </span>
+                  <CountdownBadge date={next.date} />
+                </div>
+              );
+            })()}
+            <div className="portal-meta">
+              <div className="portal-meta-item"><div className="portal-meta-label">Offence date</div><div className="portal-meta-value">{dateLabel(c.offenceDate)}</div></div>
+              {c.ticketNumber && <div className="portal-meta-item"><div className="portal-meta-label">Ticket</div><div className="portal-meta-value mono">{c.ticketNumber}</div></div>}
+              {c.offenceLocation && <div className="portal-meta-item"><div className="portal-meta-label">Where it happened</div><div className="portal-meta-value">{c.offenceLocation}</div></div>}
+              {(c.citationIssuingAgency || c.officerName) && <div className="portal-meta-item"><div className="portal-meta-label">Issued by</div><div className="portal-meta-value">{[c.citationIssuingAgency, c.officerName].filter(Boolean).join(' · ')}</div></div>}
+              {(c.courtLocation || c.courtRoomNumber) && <div className="portal-meta-item"><div className="portal-meta-label">Courthouse</div><div className="portal-meta-value">{[c.courtLocation, c.courtRoomNumber ? `Room ${c.courtRoomNumber}` : null].filter(Boolean).join(' · ')}</div></div>}
+              {c.courtFileNumber && <div className="portal-meta-item"><div className="portal-meta-label">Court file</div><div className="portal-meta-value mono">{c.courtFileNumber}</div></div>}
+              {c.hearingType && <div className="portal-meta-item"><div className="portal-meta-label">Hearing</div><div className="portal-meta-value">{c.hearingType}</div></div>}
+              {c.assignedTo && <div className="portal-meta-item"><div className="portal-meta-label">Looking after your file</div><div className="portal-meta-value">{c.assignedTo}</div></div>}
+              {c.intakeDate && <div className="portal-meta-item"><div className="portal-meta-label">Opened</div><div className="portal-meta-value">{dateLabel(c.intakeDate)}</div></div>}
+              {c.responseDeadline && <div className="portal-meta-item"><div className="portal-meta-label">Respond by</div><div className={`portal-meta-value${isoDay(c.responseDeadline) < data.today ? ' warn' : ''}`}>{dateLabel(c.responseDeadline)}</div></div>}
             </div>
+            <div className="money-band">
+              <div className="money-cell"><div className="money-label">Total owed</div><div className="money-value">{money(c.totalOwed)}</div></div>
+              <div className="money-cell"><div className="money-label">Paid</div><div className="money-value" style={{ color: 'hsl(var(--chart-2))' }}>{money(c.amountReceived)}</div></div>
+              <div className="money-cell"><div className="money-label">Balance owing</div><div className={`money-value${c.balanceOwing > 0 ? ' warn' : ''}`}>{money(c.balanceOwing)}</div></div>
+              {c.creditBalance > 0 && <div className="money-cell"><div className="money-label">Credit on account</div><div className="money-value" style={{ color: 'hsl(var(--chart-2))' }} data-testid={`value-portal-credit-${c.id}`}>{money(c.creditBalance)}</div></div>}
+            </div>
+            {(c.outcome || c.reducedCharge || c.courtFineAmount != null || c.demeritPoints != null || c.licenceSuspended != null || c.closedDate) && (
+              <div className="portal-outcome" data-testid={`section-portal-outcome-${c.id}`}>
+                <div className="portal-block-title"><Gavel size={13} /> Outcome</div>
+                <div className="portal-outcome-grid">
+                  {c.outcome && <div><div className="portal-meta-label">Result</div><div className="portal-meta-value">{c.outcome}</div></div>}
+                  {c.reducedCharge && <div><div className="portal-meta-label">Reduced to</div><div className="portal-meta-value">{c.reducedCharge}</div></div>}
+                  {c.courtFineAmount != null && <div><div className="portal-meta-label">Court fine</div><div className="portal-meta-value">{money(c.courtFineAmount)}</div></div>}
+                  {c.demeritPoints != null && <div><div className="portal-meta-label">Demerit points</div><div className="portal-meta-value">{c.demeritPoints}</div></div>}
+                  {c.licenceSuspended != null && <div><div className="portal-meta-label">Licence</div><div className="portal-meta-value">{c.licenceSuspended ? `Suspended${c.suspensionDays ? ` for ${c.suspensionDays} days` : ''}` : 'Not suspended'}</div></div>}
+                  {c.closedDate && <div><div className="portal-meta-label">File closed</div><div className="portal-meta-value">{dateLabel(c.closedDate)}</div></div>}
+                </div>
+              </div>
+            )}
             {c.courtDates.length > 0 && (
               <div className="portal-block">
                 <div className="portal-block-title"><CalendarClock size={13} /> Court dates</div>
-                {c.courtDates.map((cd, i) => (
+                {portalCourtDates(c.courtDates, data.today).map((cd, i) => (
                   <div className="portal-line" key={i}>
                     <span className="mono">{dateLabel(cd.date)}</span>
-                    <span className="muted">{cd.outcome || 'Scheduled appearance'}</span>
-                    <CountdownBadge date={cd.date} />
+                    <span className="muted">{cd.outcome || (isoDay(cd.date) >= data.today ? 'Scheduled appearance' : 'Appearance held — no note recorded')}</span>
+                    {/* A past date is history, not something the client is late for. */}
+                    {isoDay(cd.date) >= data.today && <CountdownBadge date={cd.date} />}
                   </div>
                 ))}
               </div>
             )}
             {c.payments.length > 0 && (
               <div className="portal-block">
-                <div className="portal-block-title"><Receipt size={13} /> Payments</div>
+                <div className="portal-block-title"><Receipt size={13} /> Receipts</div>
                 {c.payments.map((p, i) => (
-                  <div className="portal-line" key={i}>
-                    <span className="mono" style={{ fontWeight: 700 }}>{money(p.amount)}</span>
-                    <span className="muted">{p.method || 'Payment'} · {dateLabel(p.date)}</span>
-                    <span className="muted" style={{ fontSize: 10 }}>{p.note || ''}</span>
+                  <div className="portal-line" key={i} data-testid={`portal-payment-${i}`}>
+                    <span className="mono" style={{ fontWeight: 700, color: p.isRefund ? 'hsl(var(--accent))' : undefined }}>{p.isRefund ? '−' : ''}{money(p.amount)}</span>
+                    <span className="muted">{p.isRefund ? 'Refund' : p.method || 'Payment'} · {dateLabel(p.date)}</span>
+                    <span className="mono" style={{ fontSize: 10, color: 'hsl(var(--muted-foreground))' }}>{p.receiptNumber || ''}</span>
                   </div>
                 ))}
+                {c.creditBalance > 0 && <div className="muted" style={{ fontSize: 10.5, marginTop: 8 }}>A credit of {money(c.creditBalance)} sits on this file and will be applied to the next charge.</div>}
               </div>
             )}
             {(c.updates?.length ?? 0) > 0 && (
@@ -1927,7 +2650,21 @@ function PortalPage() {
             )}
           </div>
         ))}
-        <div className="portal-note">Questions about your file? Reply to your paralegal directly — this page is read-only and updates automatically.</div>
+        {(data.clientEmail || data.clientPhone) && (
+          <div className="portal-contact" data-testid="section-portal-contact">
+            <div className="portal-block-title"><UserRound size={13} /> Your details on file</div>
+            {data.clientEmail && (
+              <div className="portal-contact-row"><Mail size={12} /><span className="portal-meta-value">{data.clientEmail}</span></div>
+            )}
+            {data.clientPhone && (
+              <div className="portal-contact-row"><Phone size={12} /><span className="portal-meta-value">{data.clientPhone}</span></div>
+            )}
+            <div className="portal-contact-hint">Court notices go to these details — tell {data.firmName || 'our office'} if either has changed.</div>
+          </div>
+        )}
+        <div className="portal-note">
+          This page refreshes itself — dates, invoices and receipts appear here as soon as our office records them. To change anything or arrange payment, reply to {data.firmName || 'your paralegal'} with your case number. Every payment is receipted here.
+        </div>
       </div>
     </PublicShell>
   );
@@ -2008,7 +2745,7 @@ function SignPage() {
 }
 
 const appRoutes = (
-  <Switch><Route path="/" component={Dashboard} /><Route path="/cases/new" component={NewCase} /><Route path="/cases/:id" component={CaseDetailPage} /><Route path="/cases" component={Cases} /><Route path="/clients/:id" component={ClientDetailPage} /><Route path="/clients" component={Clients} /><Route path="/reports" component={Reports} /><Route path="/invoices/new" component={NewInvoicePage} /><Route path="/invoices/:id" component={InvoiceDetailPage} /><Route path="/invoices" component={InvoicesPage} /><Route path="/expenses" component={ExpensesPage} /><Route path="/appointments" component={AppointmentsPage} /><Route path="/conflict-check" component={ConflictCheckerPage} /><Route path="/import" component={ImportPage} /><Route component={() => <EmptyState title="Page not found" copy="That docket page does not exist." action={<Link href="/" className="button button-primary" data-testid="link-not-found-home">Back to overview</Link>} />} /></Switch>
+  <Switch><Route path="/" component={Dashboard} /><Route path="/cases/new" component={NewCase} /><Route path="/cases/:id" component={CaseDetailPage} /><Route path="/cases" component={Cases} /><Route path="/clients/:id" component={ClientDetailPage} /><Route path="/clients" component={Clients} /><Route path="/reports" component={Reports} /><Route path="/invoices/new" component={NewInvoicePage} /><Route path="/invoices/:id/edit" component={EditInvoicePage} /><Route path="/invoices/:id" component={InvoiceDetailPage} /><Route path="/invoices" component={InvoicesPage} /><Route path="/expenses" component={ExpensesPage} /><Route path="/appointments" component={AppointmentsPage} /><Route path="/conflict-check" component={ConflictCheckerPage} /><Route path="/import" component={ImportPage} /><Route path="/team" component={TeamPage} /><Route component={() => <EmptyState title="Page not found" copy="That docket page does not exist." action={<Link href="/" className="button button-primary" data-testid="link-not-found-home">Back to overview</Link>} />} /></Switch>
 );
 
 function ProtectedRoutes() {

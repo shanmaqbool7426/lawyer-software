@@ -1141,6 +1141,8 @@ components:
         amountReceived: { type: number }
         balanceOwing: { type: number }
         isFullyPaid: { type: boolean }
+        totalOwed: { type: number }
+        creditBalance: { type: number }
         outcome: { type: ["string", "null"] }
         reducedCharge: { type: ["string", "null"] }
         courtFineAmount: { type: ["number", "null"] }
@@ -1287,9 +1289,10 @@ components:
         voidReason: { type: ["string", "null"] }
         isRefund: { type: boolean }
         refundForId: { type: ["string", "null"] }
+        receiptNumber: { type: ["string", "null"] }
     PaymentInput:
       type: object
-      required: [amount, date]
+      required: [amount, date, method, receivedBy]
       properties:
         amount: { type: number, minimum: 0.01 }
         date: { type: string, format: date }
@@ -1559,12 +1562,14 @@ components:
         outcome: { type: ["string", "null"] }
     PortalPayment:
       type: object
-      required: [amount, date]
+      required: [amount, date, isRefund]
       properties:
+        receiptNumber: { type: ["string", "null"] }
         amount: { type: number }
         date: { type: string, format: date }
         method: { type: ["string", "null"] }
         note: { type: ["string", "null"] }
+        isRefund: { type: boolean }
     PortalUpdate:
       type: object
       required: [text, createdAt]
@@ -1574,7 +1579,7 @@ components:
         createdAt: { type: string, format: date-time }
     PortalCase:
       type: object
-      required: [id, caseNumber, status, offenceDate, totalFee, amountReceived, balanceOwing, courtDates, payments, documents, updates]
+      required: [id, caseNumber, status, offenceDate, totalFee, totalOwed, amountReceived, balanceOwing, creditBalance, courtDates, payments, documents, updates]
       properties:
         id: { type: string }
         caseNumber: { type: number }
@@ -1583,8 +1588,10 @@ components:
         offenceDescription: { type: ["string", "null"] }
         offenceDate: { type: string, format: date }
         totalFee: { type: number }
+        totalOwed: { type: number }
         amountReceived: { type: number }
         balanceOwing: { type: number }
+        creditBalance: { type: number }
         courtDates:
           type: array
           items: { $ref: "#/components/schemas/PortalCourtDate" }

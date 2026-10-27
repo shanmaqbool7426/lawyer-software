@@ -7,6 +7,19 @@
  */
 import * as zod from 'zod';
 
+/**
+ * Query strings only carry text, and "false" is a non-empty string — which
+ * zod.coerce.boolean() reads as true. Parse the literal words instead, so
+ * "?billed=false" really means false.
+ */
+const queryBoolean = zod.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const text = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(text)) return true;
+  if (["false", "0", "no", "off", ""].includes(text)) return false;
+  return value;
+}, zod.boolean());
+
 
 /**
  * Returns server health status
@@ -71,6 +84,8 @@ export const GetDashboardResponse = zod.object({
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
   "isFullyPaid": zod.boolean(),
+  "totalOwed": zod.number(),
+  "creditBalance": zod.number(),
   "outcome": zod.string().nullish(),
   "reducedCharge": zod.string().nullish(),
   "courtFineAmount": zod.number().nullish(),
@@ -149,7 +164,7 @@ export const CreateWorkspaceResponse = zod.object({
  */
 export const GetNotificationsResponse = zod.object({
   "items": zod.array(zod.object({
-  "kind": zod.enum(['court-date', 'follow-up', 'outstanding', 'signature']),
+  "kind": zod.enum(['court-date', 'follow-up', 'outstanding', 'signature', 'appointment']),
   "caseId": zod.string(),
   "caseNumber": zod.number(),
   "clientName": zod.string(),
@@ -216,6 +231,8 @@ export const ListClientsResponse = zod.object({
   "leadSourceChannel": zod.string(),
   "leadSourceDetail": zod.string().nullish(),
   "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
+  "conflictCheckedAt": zod.coerce.date().nullish().describe('When the firm last screened this client for a conflict.'),
+  "conflictCheckedBy": zod.string().nullish().describe('Who performed the last conflict screening.'),
   "createdAt": zod.coerce.date()
 })),
   "total": zod.number(),
@@ -247,6 +264,8 @@ export const CreateClientResponse = zod.object({
   "leadSourceChannel": zod.string(),
   "leadSourceDetail": zod.string().nullish(),
   "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
+  "conflictCheckedAt": zod.coerce.date().nullish().describe('When the firm last screened this client for a conflict.'),
+  "conflictCheckedBy": zod.string().nullish().describe('Who performed the last conflict screening.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -266,6 +285,8 @@ export const GetClientResponse = zod.object({
   "leadSourceChannel": zod.string(),
   "leadSourceDetail": zod.string().nullish(),
   "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
+  "conflictCheckedAt": zod.coerce.date().nullish().describe('When the firm last screened this client for a conflict.'),
+  "conflictCheckedBy": zod.string().nullish().describe('Who performed the last conflict screening.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -297,6 +318,8 @@ export const UpdateClientResponse = zod.object({
   "leadSourceChannel": zod.string(),
   "leadSourceDetail": zod.string().nullish(),
   "portalToken": zod.string().nullable().describe('Active client-portal token, or null when no link is issued.'),
+  "conflictCheckedAt": zod.coerce.date().nullish().describe('When the firm last screened this client for a conflict.'),
+  "conflictCheckedBy": zod.string().nullish().describe('Who performed the last conflict screening.'),
   "createdAt": zod.coerce.date()
 })
 
@@ -367,7 +390,7 @@ export const ListCasesQueryParams = zod.object({
   "search": zod.coerce.string().optional(),
   "status": zod.coerce.string().optional(),
   "source": zod.coerce.string().optional(),
-  "outstanding": zod.coerce.boolean().optional(),
+  "outstanding": queryBoolean.optional(),
   "clientId": zod.coerce.string().optional(),
   "dateFrom": zod.coerce.date().optional(),
   "dateTo": zod.coerce.date().optional(),
@@ -422,6 +445,8 @@ export const ListCasesResponse = zod.object({
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
   "isFullyPaid": zod.boolean(),
+  "totalOwed": zod.number(),
+  "creditBalance": zod.number(),
   "outcome": zod.string().nullish(),
   "reducedCharge": zod.string().nullish(),
   "courtFineAmount": zod.number().nullish(),
@@ -552,6 +577,8 @@ export const CreateCaseResponse = zod.object({
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
   "isFullyPaid": zod.boolean(),
+  "totalOwed": zod.number(),
+  "creditBalance": zod.number(),
   "outcome": zod.string().nullish(),
   "reducedCharge": zod.string().nullish(),
   "courtFineAmount": zod.number().nullish(),
@@ -623,6 +650,8 @@ export const GetCaseResponse = zod.object({
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
   "isFullyPaid": zod.boolean(),
+  "totalOwed": zod.number(),
+  "creditBalance": zod.number(),
   "outcome": zod.string().nullish(),
   "reducedCharge": zod.string().nullish(),
   "courtFineAmount": zod.number().nullish(),
@@ -667,6 +696,7 @@ export const GetCaseResponse = zod.object({
   "voidReason": zod.string().nullish(),
   "isRefund": zod.boolean(),
   "refundForId": zod.string().nullish(),
+  "receiptNumber": zod.string().nullish(),
   "createdAt": zod.coerce.date().nullish()
 }))
 }))
@@ -782,6 +812,8 @@ export const UpdateCaseResponse = zod.object({
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
   "isFullyPaid": zod.boolean(),
+  "totalOwed": zod.number(),
+  "creditBalance": zod.number(),
   "outcome": zod.string().nullish(),
   "reducedCharge": zod.string().nullish(),
   "courtFineAmount": zod.number().nullish(),
@@ -846,6 +878,7 @@ export const CreatePaymentResponse = zod.object({
   "voidReason": zod.string().nullish(),
   "isRefund": zod.boolean(),
   "refundForId": zod.string().nullish(),
+  "receiptNumber": zod.string().nullish(),
   "createdAt": zod.coerce.date().nullish()
 })
 
@@ -1167,6 +1200,46 @@ export const getPortalViewResponseCasesItemDocumentsItemSizeMin = 0;
 
 export const GetPortalViewResponse = zod.object({
   "clientName": zod.string(),
+  "clientEmail": zod.string().nullish(),
+  "clientPhone": zod.string().nullish(),
+  "firmName": zod.string().nullish(),
+  "generatedAt": zod.coerce.date(),
+  "today": zod.string(),
+  "summary": zod.object({
+  "files": zod.number(),
+  "totalOwed": zod.number(),
+  "amountReceived": zod.number(),
+  "balanceOwing": zod.number(),
+  "creditBalance": zod.number()
+}),
+  "agenda": zod.array(zod.object({
+  "id": zod.string(),
+  "kind": zod.enum(["court", "appointment"]),
+  "date": zod.string(),
+  "startAt": zod.coerce.date().nullish(),
+  "title": zod.string(),
+  "type": zod.string(),
+  "location": zod.string().nullish(),
+  "caseId": zod.string().nullish(),
+  "caseNumber": zod.number().nullish()
+})),
+  "invoices": zod.array(zod.object({
+  "id": zod.string(),
+  "invoiceNumber": zod.number(),
+  "caseId": zod.string().nullish(),
+  "caseNumber": zod.number().nullish(),
+  "status": zod.string(),
+  "issueDate": zod.string(),
+  "dueDate": zod.string(),
+  "total": zod.number(),
+  "paidAt": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "description": zod.string(),
+  "quantity": zod.number(),
+  "unitPrice": zod.number(),
+  "amount": zod.number()
+}))
+})),
   "cases": zod.array(zod.object({
   "id": zod.string(),
   "caseNumber": zod.number(),
@@ -1174,18 +1247,39 @@ export const GetPortalViewResponse = zod.object({
   "ticketNumber": zod.string().nullish(),
   "offenceDescription": zod.string().nullish(),
   "offenceDate": zod.coerce.date(),
+  "offenceLocation": zod.string().nullish(),
+  "citationIssuingAgency": zod.string().nullish(),
+  "officerName": zod.string().nullish(),
   "totalFee": zod.number(),
+  "totalOwed": zod.number(),
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
+  "creditBalance": zod.number(),
+  "intakeDate": zod.string().nullish(),
+  "responseDeadline": zod.string().nullish(),
+  "courtLocation": zod.string().nullish(),
+  "courtRoomNumber": zod.string().nullish(),
+  "courtFileNumber": zod.string().nullish(),
+  "hearingType": zod.string().nullish(),
+  "assignedTo": zod.string().nullish(),
+  "closedDate": zod.string().nullish(),
+  "outcome": zod.string().nullish(),
+  "reducedCharge": zod.string().nullish(),
+  "courtFineAmount": zod.number().nullish(),
+  "demeritPoints": zod.number().nullish(),
+  "licenceSuspended": zod.boolean().nullish(),
+  "suspensionDays": zod.number().nullish(),
   "courtDates": zod.array(zod.object({
   "date": zod.coerce.date(),
   "outcome": zod.string().nullish()
 })),
   "payments": zod.array(zod.object({
+  "receiptNumber": zod.string().nullish(),
   "amount": zod.number(),
   "date": zod.coerce.date(),
   "method": zod.string().nullish(),
-  "note": zod.string().nullish()
+  "note": zod.string().nullish(),
+  "isRefund": zod.boolean()
 })),
   "updates": zod.array(zod.object({
   "text": zod.string(),
@@ -1334,6 +1428,8 @@ export const GetReportsSummaryResponse = zod.object({
   "amountReceived": zod.number(),
   "balanceOwing": zod.number(),
   "isFullyPaid": zod.boolean(),
+  "totalOwed": zod.number(),
+  "creditBalance": zod.number(),
   "outcome": zod.string().nullish(),
   "reducedCharge": zod.string().nullish(),
   "courtFineAmount": zod.number().nullish(),
@@ -1415,6 +1511,9 @@ const InvoiceZod = zod.object({
   "taxAmount": zod.number(),
   "total": zod.number(),
   "notes": zod.string().nullish(),
+  "sentAt": zod.string().nullish(),
+  "paidAt": zod.string().nullish(),
+  "settledReceipt": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date(),
 });
@@ -1423,6 +1522,10 @@ export const ListInvoicesQueryParams = zod.object({
   "clientId": zod.string().optional(),
   "caseId": zod.string().optional(),
   "status": zod.enum(["draft", "sent", "paid", "void"]).optional(),
+  "search": zod.string().optional(),
+  // Overdue = issued (sent) past its due date and still unpaid.
+  "overdue": queryBoolean.optional(),
+  "sort": zod.enum(["newest", "oldest", "amount_desc", "amount_asc", "due_asc"]).optional(),
   "page": zod.coerce.number().optional(),
   "limit": zod.coerce.number().optional(),
 });
@@ -1462,9 +1565,70 @@ export const UpdateInvoiceStatusParams = zod.object({
 
 export const UpdateInvoiceStatusBody = zod.object({
   "status": zod.enum(["draft", "sent", "paid", "void"]),
+  // Required when the invoice is attached to a case and is being marked paid:
+  // a settlement is a cash event, so the ledger needs a method and a name.
+  "method": zod.string().optional(),
+  "receivedBy": zod.string().optional(),
+  "date": zod.string().optional()
 });
 
 export const UpdateInvoiceStatusResponse = InvoiceZod;
+
+// Full edit — every field is optional so the form can send only what changed.
+// Line items are replaced wholesale when present, and totals are recomputed
+// server-side so a client can never drift from the stored amounts.
+export const UpdateInvoiceParams = zod.object({
+  "id": zod.string(),
+});
+
+export const UpdateInvoiceBody = zod.object({
+  "clientId": zod.string().min(1).optional(),
+  "caseId": zod.string().nullish(),
+  "issueDate": zod.string().min(1).optional(),
+  "dueDate": zod.string().min(1).optional(),
+  "items": zod.array(zod.object({
+    "description": zod.string().min(1),
+    "quantity": zod.number().min(0.01),
+    "unitPrice": zod.number().min(0),
+  })).min(1).optional(),
+  "taxRate": zod.number().min(0).max(100).optional(),
+  "notes": zod.string().nullish(),
+});
+
+export const UpdateInvoiceResponse = InvoiceZod;
+
+// Register-level totals. Computed over every invoice, not just the loaded page.
+export const GetInvoiceSummaryResponse = zod.object({
+  "draftAmount":    zod.number(),
+  "draftCount":     zod.number(),
+  "billedAmount":   zod.number(),   // sent + paid, void excluded
+  "billedCount":    zod.number(),
+  "collectedAmount": zod.number(),  // paid only
+  "collectedCount":  zod.number(),
+  "outstandingAmount": zod.number(), // sent only
+  "outstandingCount":  zod.number(),
+  "overdueAmount":  zod.number(),
+  "overdueCount":   zod.number(),
+  "voidCount":      zod.number(),
+  "totalCount":     zod.number(),
+});
+
+// Emailing an invoice reuses the client's portal link when one exists, so the
+// "couldn't send" path can always fall back to "copy this link".
+export const SendInvoiceEmailParams = zod.object({
+  "id": zod.string(),
+});
+
+export const SendInvoiceEmailBody = zod.object({
+  "email": zod.string().optional(),
+});
+
+export const SendInvoiceEmailResponse = zod.object({
+  "emailed": zod.boolean(),
+  "to":      zod.string().nullish(),
+  "reason":  zod.string().nullish(),
+  "portalUrl": zod.string().nullish(),
+});
 
 export const DeleteInvoiceParams = zod.object({
   "id": zod.string(),
@@ -1514,9 +1678,9 @@ export const ListExpensesQueryParams = zod.object({
   "caseId":      zod.string().optional(),
   "clientId":    zod.string().optional(),
   "category":    zod.string().optional(),
-  "firmOnly":    zod.coerce.boolean().optional(),   // true = no caseId
-  "billable":    zod.coerce.boolean().optional(),
-  "billed":      zod.coerce.boolean().optional(),
+  "firmOnly":    queryBoolean.optional(),   // true = no caseId
+  "billable":    queryBoolean.optional(),
+  "billed":      queryBoolean.optional(),
   "dateFrom":    zod.string().optional(),
   "dateTo":      zod.string().optional(),
   "search":      zod.string().optional(),
@@ -1541,6 +1705,8 @@ export const CreateExpenseBody = zod.object({
   "vendor":      zod.string().optional(),
   "receiptUrl":  zod.string().url().optional().or(zod.literal("")),
   "isBillable":  zod.boolean().optional().default(false),
+  // Allows logging a cost that was already invoiced (e.g. back-filling history).
+  "isBilled":    zod.boolean().optional().default(false),
 });
 
 export const CreateExpenseResponse = ExpenseZod;
@@ -1636,6 +1802,15 @@ const AppointmentZod = zod.object({
   "notes":        zod.string().nullish(),
   "status":       zod.enum(["scheduled","confirmed","completed","cancelled","no_show"]),
   "reminderSent": zod.boolean(),
+  // Court-date mirrors are all-day rows pinned to their source date.
+  "allDay":         zod.boolean().default(false),
+  "courtDateId":    zod.string().nullish(),
+  // Rows mirrored from a calendar Docketline does not own (read-only here).
+  "externalSource": zod.string().nullish(),
+  // Google Calendar linkage (null when the workspace is not connected).
+  "googleEventId":  zod.string().nullish(),
+  "googleSyncedAt": zod.coerce.date().nullish(),
+  "googleSyncError": zod.string().nullish(),
   "createdAt":    zod.coerce.date(),
   "updatedAt":    zod.coerce.date(),
 });
@@ -1645,9 +1820,12 @@ export const ListAppointmentsQueryParams = zod.object({
   "caseId":    zod.string().optional(),
   "type":      zod.string().optional(),
   "status":    zod.string().optional(),
-  "dateFrom":  zod.string().optional(),  // ISO date YYYY-MM-DD
+  "search":    zod.string().optional(),   // title, location, notes, client name, case number
+  "dateFrom":  zod.string().optional(),  // YYYY-MM-DD or a full ISO datetime
   "dateTo":    zod.string().optional(),
-  "upcoming":  zod.coerce.boolean().optional(),
+  "upcoming":  queryBoolean.optional(),
+  "source":    zod.enum(["docketline", "google"]).optional(),  // who owns the row
+  "sort":      zod.enum(["soonest", "latest"]).optional(),
   "page":      zod.coerce.number().optional(),
   "limit":     zod.coerce.number().optional(),
 });
@@ -1657,6 +1835,19 @@ export const ListAppointmentsResponse = zod.object({
   "total":    zod.number(),
   "page":     zod.number(),
   "pageSize": zod.number(),
+});
+
+// Counters for the schedule header — all computed server-side so they never
+// disagree with the register after pagination.
+export const GetAppointmentSummaryQueryParams = zod.object({
+  "caseId": zod.string().optional(),
+});
+
+export const GetAppointmentSummaryResponse = zod.object({
+  "todayCount":     zod.number(),
+  "next7Count":     zod.number(),
+  "awaitingCount":  zod.number(),
+  "completedCount": zod.number(),
 });
 
 export const CreateAppointmentBody = zod.object({
@@ -1669,6 +1860,7 @@ export const CreateAppointmentBody = zod.object({
   "location":  zod.string().optional(),
   "notes":     zod.string().optional(),
   "status":    zod.enum(["scheduled","confirmed","completed","cancelled","no_show"]).optional().default("scheduled"),
+  "allDay":    zod.boolean().optional(),
 });
 
 export const CreateAppointmentResponse = AppointmentZod;
@@ -1685,6 +1877,7 @@ export const UpdateAppointmentBody = zod.object({
   "location":  zod.string().nullish(),
   "notes":     zod.string().nullish(),
   "status":    zod.enum(["scheduled","confirmed","completed","cancelled","no_show"]).optional(),
+  "allDay":    zod.boolean().optional(),
 });
 
 export const UpdateAppointmentResponse = AppointmentZod;
@@ -1696,6 +1889,7 @@ export const DeleteAppointmentParams  = zod.object({ "id": zod.string() });
 export const GetCalendarAppointmentsQueryParams = zod.object({
   "year":  zod.coerce.number(),
   "month": zod.coerce.number(), // 1-12
+  "caseId": zod.string().optional(),
 });
 
 export const GetCalendarAppointmentsResponse = zod.array(AppointmentZod);
@@ -1710,4 +1904,38 @@ export const CheckConflictQueryParams = zod.object({
 export const CheckConflictResponse = zod.object({
   "hasConflict": zod.boolean(),
   "conflicts":   zod.array(AppointmentZod),
+});
+
+// ─── Google Calendar integration ──────────────────────────────────────────────
+
+export const GetGoogleIntegrationResponse = zod.object({
+  "configured":   zod.boolean(),
+  "connected":    zod.boolean(),
+  "accountEmail": zod.string().nullish(),
+  "calendarName": zod.string().nullish(),
+  "lastSyncedAt": zod.coerce.date().nullish(),
+  "lastError":    zod.string().nullish(),
+  "syncedCount":  zod.number(),
+  "errorCount":   zod.number(),
+});
+
+export const StartGoogleIntegrationResponse = zod.object({
+  "configured": zod.boolean(),
+  "url":        zod.string().nullish(),
+  "error":      zod.string().nullish(),
+});
+
+export const SyncGoogleIntegrationResponse = zod.object({
+  "connected": zod.boolean(),
+  "pushed":    zod.number(),
+  "pulled":    zod.number(),
+  "updated":   zod.number(),
+  // Rows mirrored in from the lawyer's own Google Calendar this run.
+  "imported":  zod.number().optional(),
+  "removed":   zod.number().optional(),
+  "error":     zod.string().nullish(),
+});
+
+export const DisconnectGoogleIntegrationResponse = zod.object({
+  "disconnected": zod.boolean(),
 });

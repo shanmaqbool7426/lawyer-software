@@ -6,8 +6,8 @@ import type {
 } from '@tanstack/react-query';
 import type {
   Appointment, AppointmentInput, AppointmentUpdate,
-  AppointmentList, ConflictCheck,
-  ListAppointmentsParams, CalendarParams,
+  AppointmentList, AppointmentSummary, ConflictCheck,
+  ListAppointmentsParams, CalendarParams, GetAppointmentSummaryParams,
 } from './api.schemas';
 import { customFetch } from '../custom-fetch';
 import type { ErrorType, BodyType } from '../custom-fetch';
@@ -35,9 +35,12 @@ function buildAppointmentQs(params?: ListAppointmentsParams): string {
   if (params.caseId)            sp.set('caseId',   params.caseId);
   if (params.type)              sp.set('type',     params.type);
   if (params.status)            sp.set('status',   params.status);
+  if (params.search)            sp.set('search',   params.search);
   if (params.dateFrom)          sp.set('dateFrom', params.dateFrom);
   if (params.dateTo)            sp.set('dateTo',   params.dateTo);
   if (params.upcoming != null)  sp.set('upcoming', String(params.upcoming));
+  if (params.source)            sp.set('source',   params.source);
+  if (params.sort)              sp.set('sort',     params.sort);
   if (params.page != null)      sp.set('page',     String(params.page));
   if (params.limit != null)     sp.set('limit',    String(params.limit));
   const s = sp.toString();
@@ -73,6 +76,34 @@ export function useListAppointments<
   return withQueryKey(query, qo.queryKey);
 }
 
+// ── Summary ───────────────────────────────────────────────────────────────────
+export const getGetAppointmentSummaryQueryKey = (params?: GetAppointmentSummaryParams) =>
+  [`/api/appointments/summary`, ...(params ? [params] : [])] as const;
+
+export const getAppointmentSummary = async (
+  params?: GetAppointmentSummaryParams,
+  options?: Parameters<typeof customFetch>[1],
+): Promise<AppointmentSummary> => {
+  const s = params?.caseId ? `?caseId=${encodeURIComponent(params.caseId)}` : '';
+  return customFetch<AppointmentSummary>(`/api/appointments/summary${s}`, { ...options, method: 'GET' });
+};
+
+export function useGetAppointmentSummary<
+  TData = Awaited<ReturnType<typeof getAppointmentSummary>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetAppointmentSummaryParams,
+  options?: { query?: UseQueryOptions<Awaited<ReturnType<typeof getAppointmentSummary>>, TError, TData>; request?: SecondParameter<typeof customFetch> },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetAppointmentSummaryQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAppointmentSummary>>> = ({ signal }) =>
+    getAppointmentSummary(params, { signal, ...requestOptions });
+  const qo = { queryKey, queryFn, ...queryOptions } as UseQueryOptions<Awaited<ReturnType<typeof getAppointmentSummary>>, TError, TData> & { queryKey: QueryKey };
+  const query = useQuery(qo) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return withQueryKey(query, qo.queryKey);
+}
+
 // ── Calendar feed ─────────────────────────────────────────────────────────────
 export const getCalendarAppointmentsQueryKey = (params: CalendarParams) =>
   [`/api/appointments/calendar`, params] as const;
@@ -82,7 +113,7 @@ export const getCalendarAppointments = async (
   options?: Parameters<typeof customFetch>[1],
 ): Promise<Appointment[]> =>
   customFetch<Appointment[]>(
-    `/api/appointments/calendar?year=${params.year}&month=${params.month}`,
+    `/api/appointments/calendar?year=${params.year}&month=${params.month}${params.caseId ? `&caseId=${encodeURIComponent(params.caseId)}` : ''}`,
     { ...options, method: 'GET' },
   );
 

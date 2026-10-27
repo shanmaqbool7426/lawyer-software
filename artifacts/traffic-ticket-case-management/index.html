@@ -19,6 +19,21 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      Google returns the OAuth code to the redirect URI registered on the client.
+      Some clients only trust the bare origin, in which case Google lands here
+      with ?code&state. Hand it straight to the API callback, which owns the
+      signed state and the token exchange — the SPA never sees the tokens.
+    -->
+    <script>
+      (function () {
+        var s = window.location.search;
+        if (!/[?&]code=/.test(s) || !/[?&]state=/.test(s)) return;
+        var p = window.location.pathname;
+        if (p !== '/' && p !== '/index.html') return;
+        window.location.replace('/api/integrations/google/callback' + s);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

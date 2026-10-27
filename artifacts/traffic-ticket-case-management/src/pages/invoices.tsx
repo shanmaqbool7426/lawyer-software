@@ -1,44 +1,80 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, Check, Download, FilePlus2, Loader2, Plus,
-  Receipt, Search, Trash2, X, Send, FileText,
-  AlertCircle, FolderOpen,
+  AlertCircle, ArrowLeft, Check, CheckCircle2, Clock, Copy, Download,
+  FilePlus2, FileText, FolderOpen, Loader2, Mail, Pencil, Plus,
+  Receipt, Search, Send, Trash2, Undo2, X,
 } from 'lucide-react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import { InvoicePDF } from '@/components/InvoicePDF';
+import { InvoiceForm, type InvoiceFormPayload } from '@/components/InvoiceForm';
 import {
-  useListInvoices,
-  useGetInvoice,
-  useCreateInvoice,
-  useUpdateInvoiceStatus,
-  useDeleteInvoice,
-  useListClients,
-  useListCases,
-  getListInvoicesQueryKey,
+  getGetCaseQueryKey,
   getGetInvoiceQueryKey,
-  getListClientsQueryKey,
+  getGetInvoiceSummaryQueryKey,
+  getGetReportCollectionsQueryKey,
   getListCasesQueryKey,
+  getListInvoicesQueryKey,
+  useCreateInvoice,
+  useDeleteInvoice,
+  useGetInvoice,
+  useGetInvoiceSummary,
+  useListInvoices,
+  useSendInvoiceEmail,
+  useUpdateInvoice,
+  useUpdateInvoiceStatus,
 } from '@workspace/api-client-react';
-import type { Invoice, InvoiceItem, InvoiceStatus } from '@workspace/api-client-react';
+import type {
+  Invoice,
+  InvoiceItem,
+  InvoiceSort,
+  InvoiceStatus,
+} from '@workspace/api-client-react';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const money = (v = 0) =>
   new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(v);
 
-const dateLabel = (v?: string | null) =>
-  v
-    ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(v))
-    : '—';
+const pad = (n: number) => String(n).padStart(2, '0');
+const localDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Date-only values arrive as UTC-midnight ISO strings; format them on their own
+// calendar day so they do not shift a day in timezones west of UTC.
+const dateLabel = (v?: string | null) => {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '—';
+  const utcMidnight = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric', ...(utcMidnight ? { timeZone: 'UTC' } : {}) }).format(d);
+};
+
+const today = () => localDay(new Date());
 const dueIn30 = () => {
   const d = new Date();
   d.setDate(d.getDate() + 30);
-  return d.toISOString().slice(0, 10);
+  return localDay(d);
 };
+
+// Debounce keystrokes so the register queries the API once per pause instead of
+// once per character.
+function useDebounced<T>(value: T, delay = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ApiError messages look like "HTTP 409 Conflict: <reason>" — surface only the reason.
+function apiMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : '';
+  const idx = raw.indexOf(': ');
+  const text = (idx >= 0 ? raw.slice(idx + 2) : raw).trim();
+  return text || fallback;
+}
 
 // ─── shared sub-components ──────────────────────────────────────────────────
 
@@ -124,49 +160,68 @@ function InvoicePill({ status }: { status: InvoiceStatus }) {
 
 export function InvoicesPage() {
   const [, setLocation] = useLocation();
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<InvoiceStatus | ''>('');
-  const [page, setPage] = useState(1);
+  const queryClient = useQueryClient();
   const PAGE_SIZE = 20;
+
+  const [searchInput, setSearchInput] = useState('');
+  const [statusFilter, setStatusFilter] = useState<InvoiceStatus | ''>('');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [sort, setSort] = useState<InvoiceSort>('newest');
+  const [page, setPage] = useState(1);
+  const [actionError, setActionError] = useState('');
+
+  // Clearing the box applies instantly instead of waiting out the debounce.
+  const debouncedSearch = useDebounced(searchInput.trim(), 300);
+  const search = searchInput.trim() === '' ? '' : debouncedSearch;
+
+  // Every filter change starts a fresh page list.
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, overdueOnly, sort]);
 
   const params = useMemo(
     () => ({
       status: statusFilter || undefined,
+      search: search || undefined,
+      overdue: overdueOnly || undefined,
+      sort,
       page,
       limit: PAGE_SIZE,
     }),
-    [statusFilter, page],
+    [statusFilter, search, overdueOnly, sort, page],
   );
 
   const invoices = useListInvoices(params, {
     query: { queryKey: getListInvoicesQueryKey(params), staleTime: 15000 },
   });
 
-  const rows = useMemo(() => {
-    const data = invoices.data?.data ?? [];
-    if (!search.trim()) return data;
-    const q = search.toLowerCase();
-    return data.filter(
-      (inv) =>
-        inv.clientName.toLowerCase().includes(q) ||
-        String(inv.invoiceNumber).includes(q),
-    );
-  }, [invoices.data, search]);
+  const rows = invoices.data?.data ?? [];
 
-  const queryClient = useQueryClient();
   const del = useDeleteInvoice();
-  const handleDelete = (id: string, num: number) => {
-    if (!window.confirm(`Delete invoice #${num}? This cannot be undone.`)) return;
+  const handleDelete = (inv: Invoice) => {
+    if (!window.confirm(`Delete invoice #${inv.invoiceNumber} for ${inv.clientName}? This cannot be undone.`)) return;
+    setActionError('');
     del.mutate(
-      { id },
+      { id: inv.id },
       {
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() }),
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetInvoiceSummaryQueryKey() });
+        },
+        onError: (err) => setActionError(apiMessage(err, 'The invoice could not be deleted.')),
       },
     );
   };
 
+  const clearFilters = () => {
+    setSearchInput('');
+    setStatusFilter('');
+    setOverdueOnly(false);
+  };
+
   const total = invoices.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const hasFilters = !!search || !!statusFilter || overdueOnly;
 
   return (
     <>
@@ -190,25 +245,46 @@ export function InvoicesPage() {
       </div>
 
       {/* Summary KPI strip */}
-      <InvoiceKpis />
+      <InvoiceKpis
+        activeStatus={statusFilter}
+        activeOverdue={overdueOnly}
+        onSelect={(next) => {
+          setStatusFilter(next.status);
+          setOverdueOnly(next.overdue);
+        }}
+      />
 
       {/* Table card */}
       <section className="card table-card" style={{ marginTop: 22 }}>
-        <div className="toolbar">
-          <div className="input-wrap" style={{ flex: 1 }}>
+        <div className="toolbar" style={{ flexWrap: 'wrap' }}>
+          <div className="input-wrap" style={{ flex: 1, minWidth: 220 }}>
             <Search />
             <input
               className="field"
-              placeholder="Search by client or invoice #"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search client, invoice #, or line item…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
+          <button
+            className={`button ${overdueOnly ? 'button-danger' : 'button-ghost'}`}
+            style={{ minHeight: 34 }}
+            onClick={() => {
+              setOverdueOnly((v) => !v);
+              setStatusFilter('');
+            }}
+            title="Only sent invoices past their due date"
+          >
+            <AlertCircle size={13} /> Overdue
+          </button>
           <select
             className="select"
             style={{ width: 140 }}
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value as InvoiceStatus | ''); setPage(1); }}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as InvoiceStatus | '');
+              setOverdueOnly(false);
+            }}
           >
             <option value="">All statuses</option>
             <option value="draft">Draft</option>
@@ -216,7 +292,43 @@ export function InvoicesPage() {
             <option value="paid">Paid</option>
             <option value="void">Void</option>
           </select>
+          <select
+            className="select"
+            style={{ width: 150 }}
+            value={sort}
+            onChange={(e) => setSort(e.target.value as InvoiceSort)}
+            title="Sort order"
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="amount_desc">Highest amount</option>
+            <option value="amount_asc">Lowest amount</option>
+            <option value="due_asc">Due date</option>
+          </select>
         </div>
+
+        {actionError && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              margin: '0 16px 12px',
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: 'hsl(var(--destructive) / .08)',
+              border: '1px solid hsl(var(--destructive) / .25)',
+              color: 'hsl(var(--destructive))',
+              fontSize: 12,
+            }}
+          >
+            <AlertCircle size={14} />
+            <span style={{ flex: 1 }}>{actionError}</span>
+            <button className="button button-ghost" style={{ minHeight: 24, padding: '0 8px' }} onClick={() => setActionError('')}>
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
         {invoices.isLoading ? (
           <LoadingState rows={7} />
@@ -224,15 +336,22 @@ export function InvoicesPage() {
           <ErrorState onRetry={() => invoices.refetch()} />
         ) : rows.length === 0 ? (
           <EmptyState
-            title="No invoices found"
-            copy="Create your first invoice to get started."
+            title={hasFilters ? 'No invoices match these filters' : 'No invoices yet'}
+            copy={
+              hasFilters
+                ? 'Try a different search term or status, or clear the filters.'
+                : 'Create your first invoice to start tracking what you are owed.'
+            }
             action={
-              <button
-                className="button button-accent"
-                onClick={() => setLocation('/invoices/new')}
-              >
-                <Plus size={14} /> New invoice
-              </button>
+              hasFilters ? (
+                <button className="button button-ghost" onClick={clearFilters}>
+                  <X size={14} /> Clear filters
+                </button>
+              ) : (
+                <button className="button button-accent" onClick={() => setLocation('/invoices/new')}>
+                  <Plus size={14} /> New invoice
+                </button>
+              )
             }
           />
         ) : (
@@ -282,7 +401,17 @@ export function InvoicesPage() {
                       {money(inv.total)}
                     </td>
                     <td>
-                      <InvoicePill status={inv.status as InvoiceStatus} />
+                      <InvoicePill status={inv.status} />
+                      {(inv.paidAt || inv.sentAt) && (
+                        <div
+                          className="muted"
+                          style={{ fontSize: 9.5, marginTop: 4, fontFamily: 'var(--app-font-mono)' }}
+                        >
+                          {inv.paidAt
+                            ? `Paid ${dateLabel(inv.paidAt)}`
+                            : `Sent ${dateLabel(inv.sentAt)}`}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
@@ -293,14 +422,27 @@ export function InvoicesPage() {
                         >
                           Open
                         </Link>
-                        <button
-                          className="button button-danger"
-                          style={{ minHeight: 28, padding: '0 8px' }}
-                          onClick={() => handleDelete(inv.id, inv.invoiceNumber)}
-                          disabled={del.isPending}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {(inv.status === 'draft' || inv.status === 'sent') && (
+                          <Link
+                            href={`/invoices/${inv.id}/edit`}
+                            className="button button-ghost"
+                            style={{ minHeight: 28, padding: '0 8px' }}
+                            title="Edit invoice"
+                          >
+                            <Pencil size={13} />
+                          </Link>
+                        )}
+                        {inv.status !== 'paid' && (
+                          <button
+                            className="button button-danger"
+                            style={{ minHeight: 28, padding: '0 8px' }}
+                            onClick={() => handleDelete(inv)}
+                            disabled={del.isPending}
+                            title="Delete invoice"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -323,7 +465,7 @@ export function InvoicesPage() {
             }}
           >
             <span className="muted" style={{ fontSize: 11 }}>
-              Page {page} of {totalPages} · {total} invoices
+              Page {page} of {totalPages} · {total} {hasFilters ? 'matching' : 'total'} invoices
             </span>
             <div style={{ display: 'flex', gap: 6 }}>
               <button
@@ -352,133 +494,178 @@ export function InvoicesPage() {
 
 // ─── KPI strip ───────────────────────────────────────────────────────────────
 
-function InvoiceKpis() {
-  const all = useListInvoices(
-    { limit: 200 },
-    { query: { queryKey: getListInvoicesQueryKey({ limit: 200 }), staleTime: 30000 } },
-  );
-  const data = all.data?.data ?? [];
-  const totalBilled   = data.reduce((s, i) => s + i.total, 0);
-  const totalPaid     = data.filter((i) => i.status === 'paid').reduce((s, i) => s + i.total, 0);
-  const totalOutstand = data.filter((i) => i.status === 'sent').reduce((s, i) => s + i.total, 0);
-  const overdue       = data.filter((i) => i.status === 'sent' && i.dueDate < today()).length;
+function InvoiceKpis({
+  activeStatus,
+  activeOverdue,
+  onSelect,
+}: {
+  activeStatus: InvoiceStatus | '';
+  activeOverdue: boolean;
+  onSelect: (next: { status: InvoiceStatus | ''; overdue: boolean }) => void;
+}) {
+  // Server-side aggregates — never truncated by pagination, drafts and voids are
+  // reported separately instead of being counted as revenue.
+  const summary = useGetInvoiceSummary({
+    query: { queryKey: getGetInvoiceSummaryQueryKey(), staleTime: 30000 },
+  });
+  const s = summary.data;
 
-  const kpis = [
-    { label: 'Total Billed',    value: money(totalBilled),   color: 'hsl(var(--chart-4))',    bg: 'hsl(var(--chart-4) / .08)' },
-    { label: 'Collected',       value: money(totalPaid),     color: 'hsl(var(--chart-2))',    bg: 'hsl(var(--chart-2) / .08)' },
-    { label: 'Outstanding',     value: money(totalOutstand), color: 'hsl(var(--accent))',     bg: 'hsl(var(--accent) / .08)'  },
-    { label: 'Overdue invoices',value: String(overdue),      color: overdue > 0 ? 'hsl(var(--destructive))' : 'hsl(var(--chart-2))', bg: overdue > 0 ? 'hsl(var(--destructive) / .07)' : 'hsl(var(--chart-2) / .07)' },
+  const cards = [
+    {
+      key: 'billed',
+      label: 'Billed',
+      value: money(s?.billedAmount ?? 0),
+      hint: `${s?.billedCount ?? 0} sent or paid`,
+      color: 'hsl(var(--chart-4))',
+      bg: 'hsl(var(--chart-4) / .08)',
+      active: !activeOverdue && activeStatus === '',
+      onClick: () => onSelect({ status: '', overdue: false }),
+      title: 'Show every invoice',
+    },
+    {
+      key: 'collected',
+      label: 'Collected',
+      value: money(s?.collectedAmount ?? 0),
+      hint: `${s?.collectedCount ?? 0} paid`,
+      color: 'hsl(var(--chart-2))',
+      bg: 'hsl(var(--chart-2) / .08)',
+      active: activeStatus === 'paid' && !activeOverdue,
+      onClick: () => onSelect({ status: 'paid', overdue: false }),
+      title: 'Show paid invoices',
+    },
+    {
+      key: 'outstanding',
+      label: 'Outstanding',
+      value: money(s?.outstandingAmount ?? 0),
+      hint: `${s?.outstandingCount ?? 0} awaiting payment`,
+      color: 'hsl(var(--accent))',
+      bg: 'hsl(var(--accent) / .08)',
+      active: activeStatus === 'sent' && !activeOverdue,
+      onClick: () => onSelect({ status: 'sent', overdue: false }),
+      title: 'Show sent invoices',
+    },
+    {
+      key: 'overdue',
+      label: 'Overdue',
+      value: money(s?.overdueAmount ?? 0),
+      hint: `${s?.overdueCount ?? 0} past due`,
+      color: (s?.overdueCount ?? 0) > 0 ? 'hsl(var(--destructive))' : 'hsl(var(--chart-2))',
+      bg: (s?.overdueCount ?? 0) > 0 ? 'hsl(var(--destructive) / .07)' : 'hsl(var(--chart-2) / .07)',
+      active: activeOverdue,
+      onClick: () => onSelect({ status: '', overdue: true }),
+      title: 'Show overdue invoices',
+    },
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 14 }}>
-      {kpis.map((kpi) => (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 14 }}>
+        {cards.map((kpi) => (
+          <button
+            key={kpi.key}
+            type="button"
+            className="card"
+            onClick={kpi.onClick}
+            title={kpi.title}
+            style={{
+              padding: '16px 18px',
+              textAlign: 'left',
+              cursor: 'pointer',
+              background: kpi.bg,
+              borderColor: kpi.active ? kpi.color : `${kpi.color}28`,
+              boxShadow: kpi.active ? `inset 0 0 0 1px ${kpi.color}` : undefined,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                fontFamily: 'var(--app-font-mono)',
+                textTransform: 'uppercase',
+                letterSpacing: '.06em',
+                color: kpi.color,
+                fontWeight: 700,
+              }}
+            >
+              {kpi.label}
+            </div>
+            <div
+              style={{
+                fontSize: 22,
+                fontWeight: 700,
+                marginTop: 10,
+                letterSpacing: '-.04em',
+                fontFamily: 'var(--app-font-mono)',
+                color: kpi.color,
+              }}
+            >
+              {summary.isLoading ? '…' : kpi.value}
+            </div>
+            <div className="muted" style={{ fontSize: 10.5, marginTop: 6 }}>
+              {summary.isLoading ? 'Loading' : kpi.hint}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {s && s.totalCount > 0 && (
         <div
-          key={kpi.label}
-          className="card"
-          style={{ padding: '16px 18px', background: kpi.bg, borderColor: `${kpi.color}28` }}
+          className="muted"
+          style={{ fontSize: 11, marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}
         >
-          <div style={{ fontSize: 10, fontFamily: 'var(--app-font-mono)', textTransform: 'uppercase', letterSpacing: '.06em', color: kpi.color, fontWeight: 700 }}>
-            {kpi.label}
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 10, letterSpacing: '-.04em', fontFamily: 'var(--app-font-mono)', color: kpi.color }}>
-            {all.isLoading ? '…' : kpi.value}
-          </div>
+          {s.draftCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => onSelect({ status: 'draft', overdue: false })}
+              title="Show drafts only"
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                font: 'inherit',
+                color: 'inherit',
+                cursor: 'pointer',
+                textDecoration: 'underline dotted',
+                textUnderlineOffset: 2,
+              }}
+            >
+              <strong style={{ color: 'hsl(var(--foreground))' }}>{s.draftCount}</strong> draft
+              {s.draftCount === 1 ? '' : 's'} worth {money(s.draftAmount)} not yet billed
+            </button>
+          ) : (
+            <span>Nothing left in draft</span>
+          )}
+          {s.voidCount > 0 && <span>· {s.voidCount} voided</span>}
+          <span>· {s.totalCount} invoice{s.totalCount === 1 ? '' : 's'} in total</span>
         </div>
-      ))}
+      )}
     </div>
   );
 }
 
-// ─── 2. New invoice form ──────────────────────────────────────────────────────
-
-interface LineItem {
-  _key: string;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-}
-
-function newLine(): LineItem {
-  return { _key: crypto.randomUUID(), description: '', quantity: '1', unitPrice: '' };
-}
+// ─── 2. Invoice create / edit pages ──────────────────────────────────────────
 
 export function NewInvoicePage() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const create = useCreateInvoice();
 
-  const clients = useListClients(
-    { limit: 100 },
-    { query: { queryKey: getListClientsQueryKey({ limit: 100 }), staleTime: 60000 } },
-  );
-  const [selectedClient, setSelectedClient] = useState('');
-
-  const cases = useListCases(
-    { clientId: selectedClient || undefined, limit: 100 },
-    {
-      query: {
-        queryKey: getListCasesQueryKey({ clientId: selectedClient || undefined, limit: 100 }),
-        staleTime: 30000,
-        enabled: !!selectedClient,
-      },
-    },
-  );
-
-  const [selectedCase, setSelectedCase] = useState('');
-  const [issueDate, setIssueDate] = useState(today());
-  const [dueDate, setDueDate] = useState(dueIn30());
-  const [taxRate, setTaxRate] = useState('0');
-  const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<LineItem[]>([newLine()]);
-
-  const updateLine = (key: string, field: keyof Omit<LineItem, '_key'>, value: string) => {
-    setLines((prev) =>
-      prev.map((l) => (l._key === key ? { ...l, [field]: value } : l)),
-    );
-  };
-  const removeLine = (key: string) => {
-    setLines((prev) => prev.filter((l) => l._key !== key));
-  };
-
-  // live totals
-  const computedItems = lines.map((l) => {
-    const qty = parseFloat(l.quantity) || 0;
-    const up  = parseFloat(l.unitPrice) || 0;
-    return { qty, up, amount: Math.round(qty * up * 100) / 100 };
-  });
-  const subtotal  = computedItems.reduce((s, i) => s + i.amount, 0);
-  const taxAmt    = Math.round(subtotal * ((parseFloat(taxRate) || 0) / 100) * 100) / 100;
-  const total     = subtotal + taxAmt;
-
-  const canSubmit =
-    !!selectedClient &&
-    !!issueDate &&
-    !!dueDate &&
-    lines.length > 0 &&
-    lines.every((l) => l.description.trim() && parseFloat(l.unitPrice) > 0);
-
-  const submit = () => {
-    if (!canSubmit) return;
+  const submit = (payload: InvoiceFormPayload) => {
     create.mutate(
       {
         data: {
-          clientId: selectedClient,
-          caseId: selectedCase || undefined,
-          issueDate,
-          dueDate,
-          taxRate: parseFloat(taxRate) || 0,
-          notes: notes.trim() || undefined,
-          items: lines.map((l) => ({
-            description: l.description.trim(),
-            quantity: parseFloat(l.quantity) || 1,
-            unitPrice: parseFloat(l.unitPrice) || 0,
-          })),
+          clientId: payload.clientId,
+          caseId: payload.caseId ?? undefined,
+          issueDate: payload.issueDate,
+          dueDate: payload.dueDate,
+          taxRate: payload.taxRate,
+          notes: payload.notes ?? undefined,
+          items: payload.items,
         },
       },
       {
         onSuccess: (inv) => {
           queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetInvoiceSummaryQueryKey() });
           setLocation(`/invoices/${inv.id}`);
         },
       },
@@ -491,240 +678,140 @@ export function NewInvoicePage() {
         <div>
           <div className="eyebrow">Billing / New</div>
           <h1 className="page-title">New invoice</h1>
-          <p className="page-copy">Fill in the client, line items, and dates — totals calculate automatically.</p>
+          <p className="page-copy">
+            Pick the client, add line items, and set the dates — totals calculate automatically.
+          </p>
         </div>
         <Link href="/invoices" className="button button-ghost">
           <ArrowLeft size={14} /> Cancel
         </Link>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.4fr) minmax(280px,.6fr)', gap: 18 }}>
-        {/* Left — main form */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          {/* Client + case */}
-          <section className="card detail-card">
-            <div className="section-title" style={{ marginBottom: 16 }}>Bill to</div>
-            <div className="form-grid">
-              <div className="form-field">
-                <label className="form-label">Client *</label>
-                <select
-                  className="select"
-                  value={selectedClient}
-                  onChange={(e) => { setSelectedClient(e.target.value); setSelectedCase(''); }}
-                  disabled={clients.isLoading}
-                >
-                  <option value="">Select a client</option>
-                  {(clients.data?.data ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>{c.fullName}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-field">
-                <label className="form-label">Link to case <span className="muted">(optional)</span></label>
-                <select
-                  className="select"
-                  value={selectedCase}
-                  onChange={(e) => setSelectedCase(e.target.value)}
-                  disabled={!selectedClient || cases.isLoading}
-                >
-                  <option value="">No case</option>
-                  {(cases.data?.data ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      #{c.caseNumber} — {c.offenceDescription || c.statuteCode || 'Traffic matter'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </section>
+      <InvoiceForm
+        mode="create"
+        saving={create.isPending}
+        error={
+          create.isError
+            ? apiMessage(create.error, 'Invoice could not be created. Check the fields and try again.')
+            : null
+        }
+        onSubmit={submit}
+      />
+    </>
+  );
+}
 
-          {/* Line items */}
-          <section className="card detail-card">
-            <div className="section-head" style={{ marginBottom: 14 }}>
-              <div className="section-title">Line items</div>
-              <button
-                className="button button-ghost"
-                style={{ minHeight: 30, padding: '0 10px' }}
-                onClick={() => setLines((prev) => [...prev, newLine()])}
-              >
-                <Plus size={13} /> Add line
-              </button>
-            </div>
+export function EditInvoicePage() {
+  const { id = '' } = useParams<{ id: string }>();
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
 
-            {/* Header row */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 80px 100px 80px 28px',
-                gap: 8,
-                padding: '0 0 8px',
-                borderBottom: '1px solid hsl(var(--border))',
-                marginBottom: 10,
-              }}
-            >
-              {['Description', 'Qty', 'Unit price', 'Amount', ''].map((h) => (
-                <div key={h} className="form-label" style={{ padding: 0 }}>{h}</div>
-              ))}
-            </div>
+  const inv = useGetInvoice(id, {
+    query: { queryKey: getGetInvoiceQueryKey(id), staleTime: 10000 },
+  });
+  const update = useUpdateInvoice();
 
-            {lines.map((line, idx) => (
-              <div
-                key={line._key}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 80px 100px 80px 28px',
-                  gap: 8,
-                  alignItems: 'center',
-                  marginBottom: 8,
-                }}
-              >
-                <input
-                  className="field"
-                  style={{ minHeight: 34 }}
-                  placeholder={`e.g. Legal representation — matter ${idx + 1}`}
-                  value={line.description}
-                  onChange={(e) => updateLine(line._key, 'description', e.target.value)}
-                />
-                <input
-                  className="field"
-                  style={{ minHeight: 34 }}
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  placeholder="1"
-                  value={line.quantity}
-                  onChange={(e) => updateLine(line._key, 'quantity', e.target.value)}
-                />
-                <input
-                  className="field"
-                  style={{ minHeight: 34 }}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={line.unitPrice}
-                  onChange={(e) => updateLine(line._key, 'unitPrice', e.target.value)}
-                />
-                <div
-                  style={{
-                    fontFamily: 'var(--app-font-mono)',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    textAlign: 'right',
-                    paddingRight: 4,
-                  }}
-                >
-                  {money(computedItems[idx]?.amount ?? 0)}
-                </div>
-                <button
-                  className="button button-danger"
-                  style={{ minHeight: 28, padding: '0 6px', opacity: lines.length === 1 ? 0.3 : 1 }}
-                  disabled={lines.length === 1}
-                  onClick={() => removeLine(line._key)}
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-          </section>
+  if (inv.isLoading) {
+    return (
+      <>
+        <div className="eyebrow" style={{ marginBottom: 16 }}>Edit invoice</div>
+        <LoadingState rows={6} />
+      </>
+    );
+  }
+  if (inv.isError || !inv.data) {
+    return (
+      <>
+        <div className="eyebrow" style={{ marginBottom: 16 }}>Edit invoice</div>
+        <ErrorState onRetry={() => inv.refetch()} />
+      </>
+    );
+  }
 
-          {/* Notes */}
-          <section className="card detail-card">
-            <div className="section-title" style={{ marginBottom: 12 }}>Notes</div>
-            <textarea
-              className="textarea"
-              style={{ minHeight: 80 }}
-              placeholder="Payment terms, bank details, thank-you note, etc."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </section>
+  const invoice = inv.data;
+  const locked = invoice.status === 'paid' || invoice.status === 'void';
+  const number = `INV-${String(invoice.invoiceNumber).padStart(4, '0')}`;
+
+  const submit = (payload: InvoiceFormPayload) => {
+    update.mutate(
+      {
+        id,
+        data: {
+          clientId: payload.clientId,
+          caseId: payload.caseId,
+          issueDate: payload.issueDate,
+          dueDate: payload.dueDate,
+          taxRate: payload.taxRate,
+          notes: payload.notes,
+          items: payload.items,
+        },
+      },
+      {
+        onSuccess: (next) => {
+          queryClient.invalidateQueries({ queryKey: getGetInvoiceQueryKey(next.id) });
+          queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetInvoiceSummaryQueryKey() });
+          setLocation(`/invoices/${next.id}`);
+        },
+      },
+    );
+  };
+
+  return (
+    <>
+      <div className="section-head" style={{ alignItems: 'flex-start', marginBottom: 25 }}>
+        <div>
+          <div className="eyebrow">Billing / Edit</div>
+          <h1 className="page-title">Edit {number}</h1>
+          <p className="page-copy">
+            {invoice.clientName} · totals are recalculated server-side when you save.
+          </p>
         </div>
-
-        {/* Right — dates + totals + submit */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <section className="card detail-card">
-            <div className="section-title" style={{ marginBottom: 14 }}>Dates</div>
-            <div className="form-field" style={{ marginBottom: 12 }}>
-              <label className="form-label">Issue date *</label>
-              <input
-                className="field"
-                type="date"
-                value={issueDate}
-                onChange={(e) => setIssueDate(e.target.value)}
-              />
-            </div>
-            <div className="form-field">
-              <label className="form-label">Due date *</label>
-              <input
-                className="field"
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-              />
-            </div>
-          </section>
-
-          {/* Totals card */}
-          <section className="card detail-card">
-            <div className="section-title" style={{ marginBottom: 14 }}>Summary</div>
-            <div className="form-field" style={{ marginBottom: 14 }}>
-              <label className="form-label">Tax / HST rate (%)</label>
-              <input
-                className="field"
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                placeholder="0"
-                value={taxRate}
-                onChange={(e) => setTaxRate(e.target.value)}
-              />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 0', borderTop: '1px solid hsl(var(--border))' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                <span className="muted">Subtotal</span>
-                <span style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 600 }}>{money(subtotal)}</span>
-              </div>
-              {taxAmt > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                  <span className="muted">Tax ({parseFloat(taxRate) || 0}%)</span>
-                  <span style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 600 }}>{money(taxAmt)}</span>
-                </div>
-              )}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  paddingTop: 10,
-                  borderTop: '1px solid hsl(var(--border))',
-                }}
-              >
-                <span style={{ fontWeight: 700, fontSize: 14 }}>Total</span>
-                <span style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, fontSize: 18, color: 'hsl(var(--accent))' }}>
-                  {money(total)}
-                </span>
-              </div>
-            </div>
-
-            {create.isError && (
-              <div style={{ color: 'hsl(var(--destructive))', fontSize: 11, marginBottom: 10 }}>
-                Invoice could not be created. Check the fields and try again.
-              </div>
-            )}
-
-            <button
-              className="button button-accent"
-              style={{ width: '100%', marginTop: 6 }}
-              disabled={create.isPending || !canSubmit}
-              onClick={submit}
-            >
-              {create.isPending ? <Loader2 className="animate-spin" size={15} /> : <FilePlus2 size={15} />}
-              Create invoice
-            </button>
-          </section>
-        </div>
+        <Link href={`/invoices/${id}`} className="button button-ghost">
+          <ArrowLeft size={14} /> Back to invoice
+        </Link>
       </div>
+
+      {locked ? (
+        <div className="card" style={{ padding: 22, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <AlertCircle size={18} style={{ color: 'hsl(var(--destructive))', flexShrink: 0, marginTop: 2 }} />
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>
+              This invoice is {invoice.status === 'paid' ? 'paid' : 'voided'} and can no longer be edited.
+            </div>
+            <p className="muted" style={{ fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+              Settled invoices are immutable accounting records.{' '}
+              {invoice.status === 'paid'
+                ? 'Mark it as unpaid first if you really need to correct something.'
+                : 'Create a fresh invoice instead.'}
+            </p>
+            <Link href={`/invoices/${id}`} className="button button-ghost" style={{ marginTop: 14 }}>
+              Back to invoice
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <InvoiceForm
+          key={invoice.id}
+          mode="edit"
+          initial={{
+            clientId: invoice.clientId,
+            caseId: invoice.caseId ?? null,
+            issueDate: invoice.issueDate,
+            dueDate: invoice.dueDate,
+            taxRate: invoice.taxRate,
+            notes: invoice.notes ?? '',
+            items: invoice.items.map((item) => ({
+              description: item.description,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+            })),
+          }}
+          saving={update.isPending}
+          error={update.isError ? apiMessage(update.error, 'Changes could not be saved.') : null}
+          onSubmit={submit}
+        />
+      )}
     </>
   );
 }
@@ -741,28 +828,124 @@ export function InvoiceDetailPage() {
   });
   const updateStatus = useUpdateInvoiceStatus();
   const del = useDeleteInvoice();
+  const send = useSendInvoiceEmail();
+
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'warn' | 'error'; text: string; url?: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  // Settling a case-linked invoice raises a receipt, so the money details are
+  // captured right here instead of being typed into the ledger separately.
+  const [settling, setSettling] = useState(false);
+  const [settleForm, setSettleForm] = useState({ date: localDay(new Date()), method: 'E-transfer', receivedBy: '' });
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: getGetInvoiceQueryKey(id) });
+    queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetInvoiceSummaryQueryKey() });
+  };
+
+  // Settling or un-settling an invoice moves money on the case ledger, so the
+  // case page, the register and the day book all have to refetch.
+  const refreshLedger = () => {
+    const caseId = inv.data?.caseId;
+    if (caseId) queryClient.invalidateQueries({ queryKey: getGetCaseQueryKey(caseId) });
+    queryClient.invalidateQueries({ queryKey: getListCasesQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetReportCollectionsQueryKey() });
+  };
 
   const setStatus = (status: InvoiceStatus) => {
+    setNotice(null);
     updateStatus.mutate(
       { id, data: { status } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetInvoiceQueryKey(id) });
-          queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+          refresh();
+          refreshLedger();
         },
+        onError: (err) =>
+          setNotice({ kind: 'error', text: apiMessage(err, 'The status could not be changed.') }),
       },
     );
   };
 
+  // Mark paid with the money details the ledger needs to raise a receipt.
+  const settleInvoice = () => {
+    if (!settleForm.receivedBy.trim()) return;
+    setNotice(null);
+    updateStatus.mutate(
+      {
+        id,
+        data: {
+          status: 'paid',
+          date: settleForm.date,
+          method: settleForm.method,
+          receivedBy: settleForm.receivedBy.trim(),
+        },
+      },
+      {
+        onSuccess: () => {
+          setSettling(false);
+          refresh();
+          refreshLedger();
+          setNotice({ kind: 'ok', text: 'Invoice marked paid and a receipt was recorded on the case ledger.' });
+        },
+        onError: (err) =>
+          setNotice({ kind: 'error', text: apiMessage(err, 'The invoice could not be settled.') }),
+      },
+    );
+  };
+
+  const handleSend = () => {
+    setNotice(null);
+    setCopied(false);
+    send.mutate(
+      { id },
+      {
+        onSuccess: (result) => {
+          refresh();
+          if (result.emailed) {
+            setNotice({ kind: 'ok', text: `Invoice emailed to ${result.to}.` });
+            return;
+          }
+          const why =
+            result.reason === 'no_client_email'
+              ? 'This client has no email address on file.'
+              : result.reason === 'not_configured'
+                ? 'Email is not configured on this server.'
+                : 'The email provider rejected the message.';
+          setNotice({
+            kind: 'warn',
+            text: `${why} Copy the portal link below and send it yourself.`,
+            url: result.portalUrl ?? undefined,
+          });
+        },
+        onError: (err) =>
+          setNotice({ kind: 'error', text: apiMessage(err, 'The invoice could not be sent.') }),
+      },
+    );
+  };
+
+  const copyPortal = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setNotice({ kind: 'warn', text: 'Could not copy automatically — select the link and copy it manually.', url });
+    }
+  };
+
   const handleDelete = () => {
-    if (!window.confirm('Delete this invoice?')) return;
+    if (!window.confirm('Delete this invoice? This cannot be undone.')) return;
     del.mutate(
       { id },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListInvoicesQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetInvoiceSummaryQueryKey() });
           setLocation('/invoices');
         },
+        onError: (err) =>
+          setNotice({ kind: 'error', text: apiMessage(err, 'The invoice could not be deleted.') }),
       },
     );
   };
@@ -797,36 +980,63 @@ export function InvoiceDetailPage() {
           <div className="detail-id">{invoice.clientName}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <InvoicePill status={invoice.status as InvoiceStatus} />
+          <InvoicePill status={invoice.status} />
 
-          {invoice.status === 'draft' && (
+          {(invoice.status === 'draft' || invoice.status === 'sent') && (
             <button
               className="button button-primary"
+              disabled={send.isPending}
+              onClick={handleSend}
+            >
+              {send.isPending ? <Loader2 className="animate-spin" size={14} /> : <Mail size={14} />}
+              {invoice.sentAt ? 'Resend to client' : 'Send to client'}
+            </button>
+          )}
+          {invoice.status === 'draft' && (
+            <button
+              className="button button-ghost"
               disabled={updateStatus.isPending}
               onClick={() => setStatus('sent')}
+              title="Mark as sent without emailing it"
             >
-              {updateStatus.isPending ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
-              Mark as sent
+              <Send size={14} /> Mark sent
             </button>
           )}
           {invoice.status === 'sent' && (
             <button
               className="button button-accent"
               disabled={updateStatus.isPending}
-              onClick={() => setStatus('paid')}
+              onClick={() => (invoice.caseId ? setSettling((open) => !open) : setStatus('paid'))}
+              title={invoice.caseId ? 'Record the receipt and mark this invoice paid' : 'Mark this invoice paid'}
             >
               {updateStatus.isPending ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />}
               Mark as paid
             </button>
           )}
-          {(invoice.status === 'draft' || invoice.status === 'sent') && (
+          {invoice.status === 'paid' && (
             <button
               className="button button-ghost"
               disabled={updateStatus.isPending}
-              onClick={() => setStatus('void')}
+              onClick={() => setStatus('sent')}
+              title="Use this when a payment bounces — the paid date is cleared"
             >
-              <X size={14} /> Void
+              <Undo2 size={14} /> Mark as unpaid
             </button>
+          )}
+          {(invoice.status === 'draft' || invoice.status === 'sent') && (
+            <>
+              <Link href={`/invoices/${invoice.id}/edit`} className="button button-ghost">
+                <Pencil size={14} /> Edit
+              </Link>
+              <button
+                className="button button-ghost"
+                disabled={updateStatus.isPending}
+                onClick={() => setStatus('void')}
+                title="Voiding is permanent — the invoice stays on record but can't be edited or paid"
+              >
+                <X size={14} /> Void
+              </button>
+            </>
           )}
           <PDFDownloadLink
             document={<InvoicePDF invoice={invoice} />}
@@ -834,22 +1044,119 @@ export function InvoiceDetailPage() {
             style={{ textDecoration: 'none' }}
           >
             {({ loading }) => (
-              <button className="button button-primary" disabled={loading}>
+              <button className="button button-ghost" disabled={loading}>
                 {loading
                   ? <><Loader2 size={14} className="animate-spin" /> Preparing PDF&hellip;</>
                   : <><Download size={14} /> Download PDF</>}
               </button>
             )}
           </PDFDownloadLink>
-          <button
-            className="button button-danger"
-            onClick={handleDelete}
-            disabled={del.isPending}
-          >
-            <Trash2 size={14} />
-          </button>
+          {invoice.status !== 'paid' && (
+            <button
+              className="button button-danger"
+              onClick={handleDelete}
+              disabled={del.isPending}
+              title="Delete invoice"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
       </div>
+
+      {settling && invoice.status === 'sent' && invoice.caseId && (
+        <section
+          className="card no-print"
+          data-testid="panel-settle-invoice"
+          style={{ padding: 18, marginBottom: 16, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}
+        >
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div className="section-title" style={{ fontSize: 14 }}>Record the receipt</div>
+            <div className="section-kicker" style={{ marginTop: 4 }}>
+              Settling adds {money(invoice.total)} to case #{invoice.caseNumber ?? ''} with a numbered receipt, and it shows in the day book the same day.
+            </div>
+          </div>
+          <div className="form-field" style={{ width: 145 }}>
+            <label className="form-label">Date</label>
+            <input className="field" type="date" data-testid="input-settle-date" value={settleForm.date} onChange={(e) => setSettleForm({ ...settleForm, date: e.target.value })} />
+          </div>
+          <div className="form-field" style={{ width: 150 }}>
+            <label className="form-label">Method</label>
+            <select className="select" data-testid="select-settle-method" value={settleForm.method} onChange={(e) => setSettleForm({ ...settleForm, method: e.target.value })}>
+              <option>E-transfer</option><option>Cash</option><option>Card</option><option>Cheque</option><option>Money order</option><option>Wire</option><option>Other</option>
+            </select>
+          </div>
+          <div className="form-field" style={{ width: 195 }}>
+            <label className="form-label">Received by <span className="muted">(required)</span></label>
+            <input className="field" data-testid="input-settle-received-by" autoFocus value={settleForm.receivedBy} onChange={(e) => setSettleForm({ ...settleForm, receivedBy: e.target.value })} placeholder="Who handled the money?" />
+          </div>
+          <button className="button button-accent" data-testid="button-confirm-settle" disabled={updateStatus.isPending || !settleForm.receivedBy.trim()} onClick={settleInvoice}>
+            {updateStatus.isPending ? <Loader2 className="animate-spin" size={14} /> : <Check size={14} />} Record receipt &amp; mark paid
+          </button>
+          <button className="button button-ghost" onClick={() => setSettling(false)}>Cancel</button>
+        </section>
+      )}
+
+      {notice && (
+        <div
+          className="no-print"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+            padding: '12px 14px',
+            marginBottom: 16,
+            borderRadius: 8,
+            fontSize: 12.5,
+            lineHeight: 1.55,
+            background:
+              notice.kind === 'ok'
+                ? 'hsl(var(--chart-2) / .08)'
+                : notice.kind === 'warn'
+                  ? 'hsl(var(--chart-4) / .10)'
+                  : 'hsl(var(--destructive) / .08)',
+            border: `1px solid ${
+              notice.kind === 'ok'
+                ? 'hsl(var(--chart-2) / .3)'
+                : notice.kind === 'warn'
+                  ? 'hsl(var(--chart-4) / .35)'
+                  : 'hsl(var(--destructive) / .25)'
+            }`,
+            color:
+              notice.kind === 'ok'
+                ? 'hsl(var(--chart-2))'
+                : notice.kind === 'warn'
+                  ? 'hsl(var(--chart-4))'
+                  : 'hsl(var(--destructive))',
+          }}
+        >
+          {notice.kind === 'ok' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div>{notice.text}</div>
+            {notice.url && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                <code style={{ fontFamily: 'var(--app-font-mono)', fontSize: 11, wordBreak: 'break-all' }}>
+                  {notice.url}
+                </code>
+                <button
+                  className="button button-ghost"
+                  style={{ minHeight: 26, padding: '0 8px' }}
+                  onClick={() => notice.url && copyPortal(notice.url)}
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy link'}
+                </button>
+              </div>
+            )}
+          </div>
+          <button
+            className="button button-ghost"
+            style={{ minHeight: 24, padding: '0 6px' }}
+            onClick={() => setNotice(null)}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {/* Overdue banner */}
       {isOverdue && (
@@ -924,6 +1231,51 @@ export function InvoiceDetailPage() {
             </div>
           </div>
         </div>
+
+        {(invoice.sentAt || invoice.paidAt) && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 18,
+              flexWrap: 'wrap',
+              marginTop: 16,
+              fontSize: 11,
+              color: 'hsl(var(--muted-foreground))',
+            }}
+          >
+            {invoice.sentAt && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <Clock size={12} /> Issued to client {dateLabel(invoice.sentAt)}
+              </span>
+            )}
+            {invoice.paidAt && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  color: 'hsl(var(--chart-2))',
+                  fontWeight: 600,
+                }}
+              >
+                <CheckCircle2 size={12} /> Paid in full {dateLabel(invoice.paidAt)}
+              </span>
+            )}
+            {invoice.paidAt && invoice.settledReceipt && (
+              <span
+                data-testid="text-settled-receipt"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'var(--app-font-mono)' }}
+              >
+                <Receipt size={12} /> {invoice.settledReceipt}
+              </span>
+            )}
+            {invoice.paidAt && !invoice.settledReceipt && (
+              <span>
+                No case receipt — this invoice is not linked to a case ledger
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Line items table */}
         <div className="table-scroll" style={{ marginTop: 24 }}>

@@ -24,6 +24,16 @@ export interface Client {
      * @nullable
      */
   portalToken: string | null;
+  /**
+     * When the firm last screened this client for a conflict.
+     * @nullable
+     */
+  conflictCheckedAt?: string | null;
+  /**
+     * Who performed the last conflict screening.
+     * @nullable
+     */
+  conflictCheckedBy?: string | null;
   createdAt: string;
 }
 
@@ -126,6 +136,8 @@ export interface Case {
   amountReceived: number;
   balanceOwing: number;
   isFullyPaid: boolean;
+  totalOwed: number;
+  creditBalance: number;
   /** @nullable */
   outcome?: string | null;
   /** @nullable */
@@ -288,6 +300,8 @@ export interface Payment {
   /** @nullable */
   refundForId?: string | null;
   /** @nullable */
+  receiptNumber?: string | null;
+  /** @nullable */
   createdAt?: string | null;
 }
 
@@ -295,10 +309,10 @@ export interface PaymentInput {
   /** @minimum 0.01 */
   amount: number;
   date: string;
-  method?: string;
+  method: string;
   reference?: string;
   allocationType?: 'Retainer' | 'Installment' | 'Final Payment' | 'Disbursement' | 'General';
-  receivedBy?: string;
+  receivedBy: string;
   note?: string;
 }
 
@@ -407,6 +421,158 @@ export interface ReportsSummary {
   outstandingCases: Case[];
 }
 
+// ── Reporting read model (services reports/analytics) ────────────────────────
+
+export interface ReportsAnalyticsParams {
+  from?: string;
+  to?: string;
+}
+
+export interface ReportMonthPoint {
+  month: string;
+  label: string;
+  written: number;
+  collected: number;
+}
+
+export interface ReportsCaseload {
+  total: number;
+  open: number;
+  closed: number;
+  openedInPeriod: number;
+  closedInPeriod: number;
+}
+
+export interface ReportsMoney {
+  written: number;
+  collected: number;
+  outstanding: number;
+  outstandingOnClosed: number;
+  billedAllTime: number;
+  collectedAllTime: number;
+  collectionRate: number;
+  byMonth: ReportMonthPoint[];
+}
+
+export interface ReportsAgingBucket {
+  label: string;
+  amount: number;
+  count: number;
+}
+
+export interface ReportsAgedCase {
+  caseId: string;
+  caseNumber: number;
+  clientName: string;
+  status: string;
+  balanceOwing: number;
+  days: number;
+  /** @nullable */
+  lastReceipt?: string | null;
+  bucket: string;
+}
+
+export interface ReportsAging {
+  total: number;
+  count: number;
+  buckets: ReportsAgingBucket[];
+  oldest: ReportsAgedCase[];
+}
+
+export interface ReportsOutcomes {
+  resolved: number;
+  favourable: number;
+  guilty: number;
+  other: number;
+  favourableRate: number;
+  reduced: number;
+  pointsRecorded: number;
+  pointsImposed: number;
+  noPoints: number;
+  counts: ReportCount[];
+}
+
+export interface ReportsWorkloadRow {
+  label: string;
+  open: number;
+  closed: number;
+  outstanding: number;
+  collected: number;
+}
+
+export interface ReportsAnalytics {
+  period: { from: string; to: string; months: number };
+  caseload: ReportsCaseload;
+  money: ReportsMoney;
+  aging: ReportsAging;
+  outcomes: ReportsOutcomes;
+  topCharges: ReportCount[];
+  courts: ReportCount[];
+  workload: ReportsWorkloadRow[];
+}
+
+export interface ExportReportParams {
+  report: 'aging' | 'revenue' | 'collections' | 'earnings';
+  from?: string;
+  to?: string;
+}
+
+// ── Collections day book & earnings ──────────────────────────────────────
+
+export interface ReportCollectionsDay {
+  date: string;
+  total: number;
+  refunds: number;
+  net: number;
+  count: number;
+  methods: Record<string, number>;
+}
+
+export interface ReportCollectionsMethod {
+  method: string;
+  amount: number;
+  count: number;
+}
+
+export interface ReportCollectionsStaff {
+  label: string;
+  amount: number;
+  count: number;
+}
+
+export interface ReportEarningsMonth {
+  month: string;
+  label: string;
+  cashIn: number;
+  expenses: number;
+  net: number;
+}
+
+export interface ReportExpenseCategory {
+  label: string;
+  amount: number;
+}
+
+export interface ReportEarnings {
+  cashIn: number;
+  expenses: number;
+  netCash: number;
+  hstInputCredit: number;
+  unbilled: number;
+  byMonth: ReportEarningsMonth[];
+  byCategory: ReportExpenseCategory[];
+}
+
+export interface ReportsCollections {
+  period: { from: string; to: string };
+  totals: { gross: number; refunds: number; net: number; count: number; refundCount: number };
+  voidedCount: number;
+  byDay: ReportCollectionsDay[];
+  byMethod: ReportCollectionsMethod[];
+  byStaff: ReportCollectionsStaff[];
+  earnings: ReportEarnings;
+}
+
 export interface PaginatedCases {
   data: Case[];
   total: number;
@@ -474,6 +640,7 @@ export const NotificationItemKind = {
   'follow-up': 'follow-up',
   outstanding: 'outstanding',
   signature: 'signature',
+  appointment: 'appointment',
 } as const;
 
 export interface NotificationItem {
@@ -510,12 +677,15 @@ export interface PortalCourtDate {
 }
 
 export interface PortalPayment {
+  /** @nullable */
+  receiptNumber?: string | null;
   amount: number;
   date: string;
   /** @nullable */
   method?: string | null;
   /** @nullable */
   note?: string | null;
+  isRefund: boolean;
 }
 
 export interface PortalUpdate {
@@ -534,22 +704,182 @@ export interface PortalCase {
   /** @nullable */
   offenceDescription?: string | null;
   offenceDate: string;
+  /** @nullable */
+  offenceLocation?: string | null;
+  /** @nullable */
+  citationIssuingAgency?: string | null;
+  /** @nullable */
+  officerName?: string | null;
   totalFee: number;
+  totalOwed: number;
   amountReceived: number;
   balanceOwing: number;
+  creditBalance: number;
+  /** @nullable */
+  intakeDate?: string | null;
+  /** @nullable */
+  responseDeadline?: string | null;
+  /** @nullable */
+  courtLocation?: string | null;
+  /** @nullable */
+  courtRoomNumber?: string | null;
+  /** @nullable */
+  courtFileNumber?: string | null;
+  /** @nullable */
+  hearingType?: string | null;
+  /** @nullable */
+  assignedTo?: string | null;
+  /** @nullable */
+  closedDate?: string | null;
+  /** @nullable */
+  outcome?: string | null;
+  /** @nullable */
+  reducedCharge?: string | null;
+  /** @nullable */
+  courtFineAmount?: number | null;
+  /** @nullable */
+  demeritPoints?: number | null;
+  /** @nullable */
+  licenceSuspended?: boolean | null;
+  /** @nullable */
+  suspensionDays?: number | null;
   courtDates: PortalCourtDate[];
   payments: PortalPayment[];
   updates: PortalUpdate[];
   documents: DocumentSummary[];
 }
 
+export type PortalAgendaItemKind = typeof PortalAgendaItemKind[keyof typeof PortalAgendaItemKind];
+
+
+export const PortalAgendaItemKind = {
+  court: 'court',
+  appointment: 'appointment',
+} as const;
+
+export interface PortalAgendaItem {
+  id: string;
+  kind: PortalAgendaItemKind;
+  date: string;
+  /** @nullable */
+  startAt?: string | null;
+  title: string;
+  type: string;
+  /** @nullable */
+  location?: string | null;
+  /** @nullable */
+  caseId?: string | null;
+  /** @nullable */
+  caseNumber?: number | null;
+}
+
+export interface PortalInvoiceItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface PortalInvoice {
+  id: string;
+  invoiceNumber: number;
+  /** @nullable */
+  caseId?: string | null;
+  /** @nullable */
+  caseNumber?: number | null;
+  status: string;
+  issueDate: string;
+  dueDate: string;
+  total: number;
+  /** @nullable */
+  paidAt?: string | null;
+  items: PortalInvoiceItem[];
+}
+
+export interface PortalSummary {
+  files: number;
+  totalOwed: number;
+  amountReceived: number;
+  balanceOwing: number;
+  creditBalance: number;
+}
+
 export interface PortalView {
   clientName: string;
+  /** @nullable */
+  clientEmail?: string | null;
+  /** @nullable */
+  clientPhone?: string | null;
+  /** @nullable */
+  firmName?: string | null;
+  generatedAt: string;
+  today: string;
+  summary: PortalSummary;
+  agenda: PortalAgendaItem[];
+  invoices: PortalInvoice[];
   cases: PortalCase[];
 }
 
-export type TrustEntryType = typeof TrustEntryType[keyof typeof TrustEntryType];
+// ─── Team & sidebar permissions ─────────────────────────────────────────────
 
+export type MemberRole = 'owner' | 'staff';
+export type MemberStatus = 'active' | 'disabled';
+
+/** One sidebar entry as the server sees it for the signed-in person. */
+export interface MeModule {
+  key: string;
+  label: string;
+  allowed: boolean;
+}
+
+export interface MeView {
+  user: { id: string; name: string; email?: string | null; role: MemberRole };
+  role: MemberRole;
+  modules: MeModule[];
+  canManageTeam: boolean;
+}
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  /** @nullable */
+  email?: string | null;
+  role: MemberRole;
+  permissions: string[];
+  status: MemberStatus;
+  /** @nullable */
+  lastSeenAt?: string | null;
+  createdAt: string;
+}
+
+export interface TeamList {
+  members: TeamMember[];
+  modules: { key: string; label: string }[];
+}
+
+export interface TeamMemberInput {
+  name: string;
+  email: string;
+  permissions: string[];
+}
+
+export interface TeamMemberUpdate {
+  name?: string;
+  permissions?: string[];
+  status?: MemberStatus;
+}
+
+export interface TeamMemberCreated {
+  member: TeamMember;
+  /** Present only when a new login was created; the owner hands it over once. */
+  password?: string | null;
+}
+
+export interface PasswordReset {
+  password: string;
+}
+
+export type TrustEntryType = typeof TrustEntryType[keyof typeof TrustEntryType];
 
 export const TrustEntryType = {
   deposit: 'deposit',
@@ -730,6 +1060,10 @@ export interface Invoice {
   taxAmount: number;
   total: number;
   notes?: string | null;
+  sentAt?: string | null;
+  paidAt?: string | null;
+  /** Receipt number that settled this invoice on the case ledger */
+  settledReceipt?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -759,12 +1093,55 @@ export interface InvoiceList {
 
 export interface InvoiceStatusUpdate {
   status: InvoiceStatus;
+  /** Required when a case-linked invoice is marked paid — the settled amount becomes a ledger receipt. */
+  method?: string;
+  receivedBy?: string;
+  date?: string;
 }
+
+/** Every field optional — only what changed needs to be sent. Totals are recomputed server-side. */
+export interface InvoiceUpdate {
+  clientId?: string;
+  caseId?: string | null;
+  issueDate?: string;
+  dueDate?: string;
+  items?: InvoiceItemInput[];
+  taxRate?: number;
+  notes?: string | null;
+}
+
+/** Register totals across all invoices (never truncated by pagination). */
+export interface InvoiceSummary {
+  draftAmount: number;
+  draftCount: number;
+  billedAmount: number;
+  billedCount: number;
+  collectedAmount: number;
+  collectedCount: number;
+  outstandingAmount: number;
+  outstandingCount: number;
+  overdueAmount: number;
+  overdueCount: number;
+  voidCount: number;
+  totalCount: number;
+}
+
+export interface SendInvoiceResult {
+  emailed: boolean;
+  to?: string | null;
+  reason?: string | null;
+  portalUrl?: string | null;
+}
+
+export type InvoiceSort = 'newest' | 'oldest' | 'amount_desc' | 'amount_asc' | 'due_asc';
 
 export type ListInvoicesParams = {
   clientId?: string;
   caseId?: string;
   status?: InvoiceStatus;
+  search?: string;
+  overdue?: boolean;
+  sort?: InvoiceSort;
   page?: number;
   limit?: number;
 };
@@ -820,6 +1197,7 @@ export interface ExpenseInput {
   vendor?: string;
   receiptUrl?: string;
   isBillable?: boolean;
+  isBilled?: boolean;
 }
 
 export interface ExpenseUpdate {
@@ -917,6 +1295,17 @@ export interface Appointment {
   notes?: string | null;
   status: AppointmentStatus;
   reminderSent: boolean;
+  /** Court-date rows cover the whole day and live in the all-day band. */
+  allDay: boolean;
+  /** Set when this row is the projection of a case court date. */
+  courtDateId?: string | null;
+  /** Set when the row is mirrored from a calendar Docketline does not own
+   *  (e.g. "google:primary"). Such rows are read-only in Docketline. */
+  externalSource?: string | null;
+  /** Google Calendar linkage — null when the workspace is not connected. */
+  googleEventId?: string | null;
+  googleSyncedAt?: Date | null;
+  googleSyncError?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -931,6 +1320,7 @@ export interface AppointmentInput {
   location?: string;
   notes?: string;
   status?: AppointmentStatus;
+  allDay?: boolean;
 }
 
 export interface AppointmentUpdate {
@@ -943,6 +1333,7 @@ export interface AppointmentUpdate {
   location?: string | null;
   notes?: string | null;
   status?: AppointmentStatus;
+  allDay?: boolean;
 }
 
 export interface AppointmentList {
@@ -950,6 +1341,18 @@ export interface AppointmentList {
   total: number;
   page: number;
   pageSize: number;
+}
+
+/** Counters for the schedule header — server-side so they match the register. */
+export interface AppointmentSummary {
+  /** Live appointments starting today. */
+  todayCount: number;
+  /** Live appointments in the seven days after today. */
+  next7Count: number;
+  /** Future appointments still awaiting confirmation. */
+  awaitingCount: number;
+  /** Completed in the last 30 days. */
+  completedCount: number;
 }
 
 export interface ConflictCheck {
@@ -962,9 +1365,14 @@ export type ListAppointmentsParams = {
   caseId?: string;
   type?: string;
   status?: string;
+  /** Matches title, location, notes, client name, case number. */
+  search?: string;
   dateFrom?: string;
   dateTo?: string;
   upcoming?: boolean;
+  /** Who owns the row: the schedule itself, or the lawyer's Google Calendar. */
+  source?: 'docketline' | 'google';
+  sort?: 'soonest' | 'latest';
   page?: number;
   limit?: number;
 };
@@ -972,6 +1380,13 @@ export type ListAppointmentsParams = {
 export type CalendarParams = {
   year: number;
   month: number;
+  /** Scope the month grid to one matter. */
+  caseId?: string;
+};
+
+export type GetAppointmentSummaryParams = {
+  /** Scope the counters to one matter. */
+  caseId?: string;
 };
 
 
@@ -1063,3 +1478,91 @@ export type CheckCaseConflictParams = {
   clientId?: string;
   excludeId?: string;
 };
+
+/** One other file that may have come out of the same incident. */
+export interface IncidentMatch {
+  caseId: string;
+  caseNumber: number;
+  clientId: string;
+  clientName: string;
+  ticketNumber?: string | null;
+  statuteCode?: string | null;
+  offenceDescription?: string | null;
+  offenceLocation?: string | null;
+  offenceDate?: string | null;
+  officerName?: string | null;
+  officerBadgeNumber?: string | null;
+  status: string;
+  /** 0–100 */
+  score: number;
+  reasons: string[];
+  matchType: ConflictMatchType;
+  /** True when we already act for someone else at the same stop. */
+  sameIncident: boolean;
+}
+
+export interface IncidentConflictResponse {
+  results: IncidentMatch[];
+  /** Any result at or above the same-incident threshold. */
+  sameIncident: boolean;
+  query: {
+    offenceDate?: string;
+    officerName?: string;
+    officerBadgeNumber?: string;
+    offenceLocation?: string;
+    ticketNumber?: string;
+  };
+}
+
+export type CheckIncidentParams = {
+  offenceDate?: string;
+  officerName?: string;
+  officerBadgeNumber?: string;
+  offenceLocation?: string;
+  ticketNumber?: string;
+  clientId?: string;
+  excludeCaseId?: string;
+};
+
+export interface RecordConflictCheckResponse {
+  id: string;
+  conflictCheckedAt: string;
+  /** @nullable */
+  conflictCheckedBy?: string | null;
+}
+
+// ─── Google Calendar integration ──────────────────────────────────────────────
+
+export interface GoogleIntegrationStatus {
+  /** Server has GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET configured. */
+  configured: boolean;
+  connected: boolean;
+  accountEmail?: string | null;
+  calendarName?: string | null;
+  lastSyncedAt?: Date | null;
+  lastError?: string | null;
+  syncedCount: number;
+  errorCount: number;
+}
+
+export interface GoogleIntegrationStart {
+  configured: boolean;
+  /** Google consent screen to open in the browser. */
+  url?: string | null;
+  error?: string | null;
+}
+
+export interface GoogleIntegrationSyncResult {
+  connected: boolean;
+  pushed: number;
+  pulled: number;
+  updated: number;
+  /** Rows mirrored in from the lawyer's own Google Calendar this run. */
+  imported?: number;
+  removed?: number;
+  error?: string | null;
+}
+
+export interface GoogleIntegrationDisconnectResult {
+  disconnected: boolean;
+}

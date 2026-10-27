@@ -330,4 +330,162 @@ router.get("/conflict-check/search", async (req, res): Promise<void> => {
   });
 });
 
+// ─── GET /conflict-check/incidents ────────────────────────────────────────────
+// "Same stop" screening. A conflict of interest in traffic work usually looks
+// like two files that came out of one incident: the same ticket number, or the
+// same officer on the same date, or the same stretch of road on the same day
+// (two drivers from one collision).
+// Query: offenceDate?, officerName?, officerBadgeNumber?, offenceLocation?,
+//        ticketNumber?, clientId?, excludeCaseId?
+router.get("/conflict-check/incidents", async (req, res): Promise<void> => {
+  const tenantId = tenantOf(res);
+  const {
+    offenceDate, officerName, officerBadgeNumber, offenceLocation,
+    ticketNumber, clientId, excludeCaseId,
+  } = req.query as Record<string, string>;
+
+  const date = (offenceDate ?? "").trim();
+  const ticket = (ticketNumber ?? "").replace(/\s/g, "").toUpperCase();
+  const officer = (officerName ?? "").trim();
+  const badge = (officerBadgeNumber ?? "").trim().toUpperCase();
+  const location = (offenceLocation ?? "").trim();
+
+  // A date alone would pull the whole calendar; a road name alone would pull
+  // every file from that highway. Demand a date or a ticket, and one more key.
+  const anyDetail = !!(officer || badge || location || ticket);
+  if (!(date || ticket) || !anyDetail) {
+    res.status(400).json({ error: "Provide offenceDate or ticketNumber, plus one of: officerName, officerBadgeNumber, offenceLocation" });
+    return;
+  }
+
+  const orConditions: Record<string, unknown>[] = [];
+  if (ticket) orConditions.push({ ticketNumber: { $regex: escapeRegex(ticket), $options: "i" } });
+  if (date) orConditions.push({ offenceDate: date });
+  if (officer) orConditions.push({ officerName: { $regex: escapeRegex(officer.split(/\s+/)[0] ?? officer), $options: "i" } });
+  if (badge) orConditions.push({ officerBadgeNumber: { $regex: escapeRegex(badge), $options: "i" } });
+  if (location) orConditions.push({ offenceLocation: { $regex: escapeRegex(location.split(/[,\u2014-]/)[0]?.trim() || location), $options: "i" } });
+
+  const baseQuery: Record<string, unknown> = { tenantId, isDeleted: { $ne: true } };
+  if (orConditions.length) baseQuery.$or = orConditions;
+  // We are asking whether we already act for someone *else* on this incident.
+  if (clientId) baseQuery.clientId = { $ne: clientId };
+  if (excludeCaseId) baseQuery.id = { $ne: excludeCaseId };
+
+  const candidates = await CaseModel.find(baseQuery).limit(200).lean();
+
+  const clientIds = Array.from(new Set(candidates.map((c) => c.clientId)));
+  const clients = clientIds.length
+    ? await ClientModel.find({ tenantId, id: { $in: clientIds } }).select("id fullName").lean()
+    : [];
+  const clientNameById = new Map(clients.map((c) => [c.id, c.fullName]));
+
+  const normOfficer = (s: string) =>
+    s.toLowerCase().replace(/\b(const\.?|cst\.?|dc|pc|officer|det\.?|sgt\.?)\b/g, " ")
+      .replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  const normRoad = (s: string) =>
+    s.toLowerCase().replace(/\b(hwy|highway|rd|road|st|street|ave|avenue|blvd|dr|drive|concession|sideroad|sr)\b/g, " ")
+      .replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+
+  const scored = candidates.map((c) => {
+    let score = 0;
+    const reasons: string[] = [];
+
+    const cTicket = (c.ticketNumber ?? "").replace(/\s/g, "").toUpperCase();
+    const sameTicket = !!ticket && !!cTicket && ticket === cTicket;
+    if (sameTicket) {
+      score = 1;
+      reasons.push("Same ticket number");
+    } else {
+      const sameDate = !!date && (c.offenceDate ?? "").trim() === date;
+      const cBadge = (c.officerBadgeNumber ?? "").trim().toUpperCase();
+      const sameOfficer = !!badge && cBadge
+        ? badge === cBadge
+        : !!officer && !!c.officerName && trigramSimilarity(normOfficer(officer), normOfficer(c.officerName)) > 0.82;
+      const sameRoad = !!location && !!c.offenceLocation
+        && trigramSimilarity(normRoad(location), normRoad(c.offenceLocation)) > 0.72;
+
+      if (sameDate && sameOfficer) {
+        score = 0.95;
+        reasons.push("Same officer and offence date");
+        if (sameRoad) reasons.push("Same location");
+      } else if (sameDate && sameRoad) {
+        score = 0.9; reasons.push("Same location and offence date");
+      } else if (sameOfficer) {
+        score = 0.55; reasons.push("Same officer");
+      } else if (sameDate) {
+        score = 0.5; reasons.push("Same offence date");
+      } else if (sameRoad) {
+        score = 0.45; reasons.push("Same location");
+      }
+    }
+
+    return { row: c, score, reasons, sameIncident: score >= 0.9 };
+  });
+
+  const results = scored
+    .filter((r) => r.score >= 0.5)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map(({ row: c, score, reasons, sameIncident }) => ({
+      caseId:             c.id,
+      caseNumber:         c.caseNumber,
+      clientId:           c.clientId,
+      clientName:         clientNameById.get(c.clientId) ?? "Unknown",
+      ticketNumber:       c.ticketNumber       ?? null,
+      statuteCode:        c.statuteCode        ?? null,
+      offenceDescription: c.offenceDescription ?? null,
+      offenceLocation:    c.offenceLocation    ?? null,
+      offenceDate:        c.offenceDate        ?? null,
+      officerName:        c.officerName        ?? null,
+      officerBadgeNumber: c.officerBadgeNumber ?? null,
+      status:             c.status,
+      score:              Math.round(score * 100),
+      reasons,
+      // "Exact" is reserved for an identical ticket number; a shared officer or
+      // road on the same day is strong, not certain.
+      matchType:          score >= 1 ? "exact" : score >= 0.9 ? "strong" : "possible",
+      sameIncident,
+    }));
+
+  res.json({
+    results,
+    // One flag the intake form can act on without re-reading the list.
+    sameIncident: results.some((r) => r.sameIncident),
+    query: { offenceDate: date, officerName: officer, officerBadgeNumber: badge, offenceLocation: location, ticketNumber: ticket },
+  });
+});
+
+// ─── POST /clients/:id/conflict-check ─────────────────────────────────────────
+// Stamp the client file: "screened for conflicts at / by". There is no session
+// user on the API, so the name is supplied by the caller and kept short.
+router.post("/clients/:id/conflict-check", async (req, res): Promise<void> => {
+  const tenantId = tenantOf(res);
+  const id = String(req.params.id ?? "");
+  if (!id) {
+    res.status(400).json({ error: "Missing client id" });
+    return;
+  }
+
+  const rawBy = (req.body as { checkedBy?: unknown } | undefined)?.checkedBy;
+  const checkedBy = typeof rawBy === "string" && rawBy.trim() ? rawBy.trim().slice(0, 120) : null;
+
+  const existing = await ClientModel.findOne({ id, tenantId, isDeleted: { $ne: true } }).lean();
+  if (!existing) {
+    res.status(404).json({ error: "Client not found" });
+    return;
+  }
+
+  const checkedAt = new Date();
+  await ClientModel.updateOne(
+    { id, tenantId },
+    { $set: { conflictCheckedAt: checkedAt, conflictCheckedBy: checkedBy } },
+  );
+
+  res.json({
+    id,
+    conflictCheckedAt: checkedAt.toISOString(),
+    conflictCheckedBy: checkedBy,
+  });
+});
+
 export default router;

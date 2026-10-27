@@ -1,22 +1,23 @@
-import { useState, useMemo, useCallback } from 'react';
-import { Link, useLocation } from 'wouter';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { Link, useSearchParams } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  AlertCircle, ArrowDownToLine, BarChart3, Check, ChevronDown,
-  ChevronUp, ExternalLink, FilePlus2, FolderOpen, Loader2,
-  Pencil, Plus, Receipt, Search, Trash2, TrendingDown, TrendingUp,
+  AlertCircle, ArrowDownToLine, BarChart3, Check, ExternalLink,
+  FolderOpen, Loader2, Pencil, Plus, RotateCcw, Search, Trash2,
   X, Building2, Briefcase,
 } from 'lucide-react';
 import {
   EXPENSE_CATEGORIES,
   getListExpensesQueryKey,
   getGetExpenseSummaryQueryKey,
+  getGetCaseQueryKey,
   getListCasesQueryKey,
   useListExpenses,
   useCreateExpense,
   useUpdateExpense,
   useDeleteExpense,
   useGetExpenseSummary,
+  useGetCase,
   useListCases,
 } from '@workspace/api-client-react';
 import type { Expense, ExpenseInput, ExpenseUpdate, ExpenseSummary } from '@workspace/api-client-react';
@@ -30,7 +31,10 @@ const fmtDate = (v?: string | null) =>
     ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(v + 'T00:00:00'))
     : '—';
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 const firstOfMonth = () => {
   const d = new Date();
@@ -129,31 +133,104 @@ function ScopeBadge({ caseId, caseNumber }: { caseId?: string | null; caseNumber
 }
 
 // ─── KPI strip ───────────────────────────────────────────────────────────────
-function ExpenseKpis({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }) {
-  const summaryParams = useMemo(() => ({ dateFrom, dateTo }), [dateFrom, dateTo]);
+interface ExpenseKpiFilters {
+  billable: string;   // '', 'true', 'false'
+  billed: string;     // '', 'true', 'false'
+  firmOnly: boolean;
+}
+
+function ExpenseKpis({ dateFrom, dateTo, caseId, filters, onSelect }: {
+  dateFrom?: string;
+  dateTo?: string;
+  caseId?: string;
+  filters: ExpenseKpiFilters;
+  onSelect: (next: Partial<ExpenseKpiFilters>) => void;
+}) {
+  const summaryParams = useMemo(() => ({ dateFrom, dateTo, caseId }), [dateFrom, dateTo, caseId]);
   const summary = useGetExpenseSummary(summaryParams, {
     query: { queryKey: getGetExpenseSummaryQueryKey(summaryParams), staleTime: 20000 },
   });
   const d = summary.data;
 
-  const kpis = [
-    { label: 'Total Expenses',   value: d ? money(d.totalAmount)    : null, color: '#c95743', bg: '#c9574312' },
-    { label: 'Billable',         value: d ? money(d.billableAmount)  : null, color: '#4b7bb5', bg: '#4b7bb512' },
-    { label: 'Unbilled',         value: d ? money(d.unbilledAmount)  : null, color: '#e8a83e', bg: '#e8a83e12' },
-    { label: 'Firm-level',       value: d ? money(d.firmAmount)      : null, color: '#647080', bg: '#64708012' },
+  const billableOnly = filters.billable === 'true';
+  const clearFilters: Partial<ExpenseKpiFilters> = { billable: '', billed: '', firmOnly: false };
+
+  const cards = [
+    {
+      key: 'total', label: 'Total expenses',
+      value: d ? money(d.totalAmount) : null,
+      hint: d ? `${d.count} expense${d.count !== 1 ? 's' : ''}` : '',
+      color: '#c95743', bg: '#c9574312',
+      active: !billableOnly && !filters.billed && !filters.firmOnly,
+      onClick: () => onSelect(clearFilters),
+    },
+    {
+      key: 'billable', label: 'Billable to clients',
+      value: d ? money(d.billableAmount) : null,
+      hint: 'recoverable from clients',
+      color: '#4b7bb5', bg: '#4b7bb512',
+      active: billableOnly && !filters.billed,
+      onClick: () => onSelect(billableOnly && !filters.billed
+        ? clearFilters
+        : { billable: 'true', billed: '', firmOnly: false }),
+    },
+    {
+      key: 'unbilled', label: 'Unbilled',
+      value: d ? money(d.unbilledAmount) : null,
+      hint: 'billable but not invoiced yet',
+      color: '#e8a83e', bg: '#e8a83e12',
+      active: billableOnly && filters.billed === 'false',
+      onClick: () => onSelect(filters.billed === 'false'
+        ? clearFilters
+        : { billable: 'true', billed: 'false', firmOnly: false }),
+    },
+    caseId
+      ? {
+          key: 'billed', label: 'Billed to client',
+          value: d ? money(d.billedAmount) : null,
+          hint: 'already invoiced on this case',
+          color: '#2e8f7b', bg: '#2e8f7b12',
+          active: billableOnly && filters.billed === 'true',
+          onClick: () => onSelect(filters.billed === 'true'
+            ? clearFilters
+            : { billable: 'true', billed: 'true', firmOnly: false }),
+        }
+      : {
+          key: 'firm', label: 'Firm-level',
+          value: d ? money(d.firmAmount) : null,
+          hint: 'not linked to any case',
+          color: '#647080', bg: '#64708012',
+          active: filters.firmOnly,
+          onClick: () => onSelect(filters.firmOnly
+            ? clearFilters
+            : { billable: '', billed: '', firmOnly: true }),
+        },
   ];
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 14, marginBottom: 22 }}>
-      {kpis.map((k) => (
-        <div key={k.label} className="card" style={{ padding: '16px 18px', background: k.bg, borderColor: `${k.color}28` }}>
+      {cards.map((k) => (
+        <button
+          key={k.key}
+          type="button"
+          onClick={k.onClick}
+          title={k.active ? 'Show all expenses' : `Filter: ${k.label}`}
+          className="card"
+          style={{
+            padding: '16px 18px', background: k.bg, textAlign: 'left', cursor: 'pointer',
+            borderColor: k.active ? `${k.color}80` : `${k.color}28`,
+            boxShadow: k.active ? `inset 0 0 0 1px ${k.color}66` : 'none',
+            transition: 'border-color .15s ease, box-shadow .15s ease',
+          }}
+        >
           <div style={{ fontSize: 10, fontFamily: 'var(--app-font-mono)', textTransform: 'uppercase', letterSpacing: '.06em', color: k.color, fontWeight: 700 }}>
             {k.label}
           </div>
           <div style={{ fontSize: 20, fontWeight: 700, marginTop: 10, letterSpacing: '-.04em', fontFamily: 'var(--app-font-mono)', color: k.color }}>
             {summary.isLoading ? <Skeleton w={80} h={20} /> : k.value}
           </div>
-        </div>
+          <div className="muted" style={{ fontSize: 10, marginTop: 6 }}>{k.hint}</div>
+        </button>
       ))}
     </div>
   );
@@ -189,6 +266,17 @@ function ExpenseForm({ editing, defaultCaseId, onSuccess, onCancel }: ExpenseFor
   const [isBilled,     setIsBilled]     = useState(editing?.isBilled     ?? false);
   const [serverError,  setServerError]  = useState('');
 
+  // A case reached through a deep link may not be in the first page of the case
+  // list — look it up so the select shows its number instead of a blank option.
+  const caseInList = (cases.data?.data ?? []).some((c) => c.id === caseId);
+  const selectedCase = useGetCase(caseId, {
+    query: {
+      queryKey: getGetCaseQueryKey(caseId),
+      enabled: !!caseId && !caseInList,
+      staleTime: 60000,
+    },
+  });
+
   const isPending = create.isPending || update.isPending;
 
   // Validation
@@ -216,6 +304,8 @@ function ExpenseForm({ editing, defaultCaseId, onSuccess, onCancel }: ExpenseFor
       vendor:      vendor.trim()     || undefined,
       receiptUrl:  receiptUrl.trim() || undefined,
       isBillable,
+      // Back-filling already-invoiced costs should not leave them "unbilled" forever.
+      isBilled: isBillable ? isBilled : false,
     };
 
     if (editing) {
@@ -304,6 +394,13 @@ function ExpenseForm({ editing, defaultCaseId, onSuccess, onCancel }: ExpenseFor
             disabled={cases.isLoading}
           >
             <option value="">Firm-level (no case)</option>
+            {caseId && !caseInList && (
+              <option value={caseId}>
+                {selectedCase.data
+                  ? `#${selectedCase.data.caseNumber} — ${selectedCase.data.clientName}`
+                  : 'Selected case'}
+              </option>
+            )}
             {(cases.data?.data ?? []).map((c) => (
               <option key={c.id} value={c.id}>
                 #{c.caseNumber} — {c.clientName}{c.offenceDescription ? ` · ${c.offenceDescription}` : ''}
@@ -387,8 +484,8 @@ function ExpenseForm({ editing, defaultCaseId, onSuccess, onCancel }: ExpenseFor
 }
 
 // ─── By-category breakdown bars ──────────────────────────────────────────────
-function CategoryBreakdown({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }) {
-  const summaryParams = useMemo(() => ({ dateFrom, dateTo }), [dateFrom, dateTo]);
+function CategoryBreakdown({ dateFrom, dateTo, caseId }: { dateFrom?: string; dateTo?: string; caseId?: string }) {
+  const summaryParams = useMemo(() => ({ dateFrom, dateTo, caseId }), [dateFrom, dateTo, caseId]);
   const summary = useGetExpenseSummary(summaryParams, {
     query: { queryKey: getGetExpenseSummaryQueryKey(summaryParams), staleTime: 20000 },
   });
@@ -440,14 +537,17 @@ function CategoryBreakdown({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: s
 }
 
 // ─── Monthly trend ────────────────────────────────────────────────────────────
-function MonthlyTrend({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }) {
-  const summaryParams = useMemo(() => ({ dateFrom, dateTo }), [dateFrom, dateTo]);
+function MonthlyTrend({ dateFrom, dateTo, caseId }: { dateFrom?: string; dateTo?: string; caseId?: string }) {
+  const summaryParams = useMemo(() => ({ dateFrom, dateTo, caseId }), [dateFrom, dateTo, caseId]);
   const summary = useGetExpenseSummary(summaryParams, {
     query: { queryKey: getGetExpenseSummaryQueryKey(summaryParams), staleTime: 20000 },
   });
 
   const months = (summary.data?.byMonth ?? []) as { month: string; amount: number; count: number }[];
   const maxAmt = months.length ? Math.max(...months.map((m) => m.amount)) : 1;
+  // Show the year as soon as the window crosses a calendar-year boundary.
+  const crossYear =
+    months.length > 0 && months[0].month.slice(0, 4) !== months[months.length - 1].month.slice(0, 4);
 
   return (
     <div className="card" style={{ padding: '18px 20px' }}>
@@ -482,7 +582,7 @@ function MonthlyTrend({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string
                   }}
                 />
                 <span style={{ fontSize: 9, fontFamily: 'var(--app-font-mono)', color: 'hsl(var(--muted-foreground))', whiteSpace: 'nowrap' }}>
-                  {m.month.slice(5)} {/* MM only */}
+                  {crossYear ? `${m.month.slice(5)}/${m.month.slice(2, 4)}` : m.month.slice(5)}
                 </span>
               </div>
             );
@@ -494,8 +594,8 @@ function MonthlyTrend({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string
 }
 
 // ─── Top vendors ─────────────────────────────────────────────────────────────
-function TopVendors({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }) {
-  const summaryParams = useMemo(() => ({ dateFrom, dateTo }), [dateFrom, dateTo]);
+function TopVendors({ dateFrom, dateTo, caseId }: { dateFrom?: string; dateTo?: string; caseId?: string }) {
+  const summaryParams = useMemo(() => ({ dateFrom, dateTo, caseId }), [dateFrom, dateTo, caseId]);
   const summary = useGetExpenseSummary(summaryParams, {
     query: { queryKey: getGetExpenseSummaryQueryKey(summaryParams), staleTime: 20000 },
   });
@@ -537,6 +637,10 @@ function TopVendors({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }
 
 // ─── Main Expenses Page ───────────────────────────────────────────────────────
 export function ExpensesPage() {
+  // The case scope lives in the URL (/expenses?caseId=…) so a case page can
+  // deep-link straight into its own costs and the Back button undoes the scope.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const caseFilter = searchParams.get('caseId') ?? '';
   const [showForm,      setShowForm]      = useState(false);
   const [editingExp,    setEditingExp]    = useState<Expense | null>(null);
   const [search,        setSearch]        = useState('');
@@ -548,23 +652,52 @@ export function ExpensesPage() {
   const [dateTo,        setDateTo]        = useState('');
   const [page,          setPage]          = useState(1);
   const [showSummary,   setShowSummary]   = useState(true);
+  const [actionError,   setActionError]   = useState('');
   const PAGE_SIZE = 25;
 
   const qc = useQueryClient();
   const del = useDeleteExpense();
+  const update = useUpdateExpense();
+
+  const scopeCase = useGetCase(caseFilter, {
+    query: { queryKey: getGetCaseQueryKey(caseFilter), enabled: !!caseFilter, staleTime: 60000 },
+  });
+
+  const setCaseScope = useCallback((id: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set('caseId', id);
+      else next.delete('caseId');
+      return next;
+    });
+    // firmOnly and a case scope are mutually exclusive, so drop it on the way in.
+    setFirmOnly(false);
+    setPage(1);
+  }, [setSearchParams]);
+
+  // A different case is a different result set — start from the first page.
+  useEffect(() => { setPage(1); }, [caseFilter]);
+
+  // A backwards range would silently return nothing — surface it and skip the
+  // date filter instead of pretending the user has no expenses.
+  const dateRangeInvalid = !!(dateFrom && dateTo && dateTo < dateFrom);
+  const filterFrom = dateRangeInvalid ? undefined : (dateFrom || undefined);
+  const filterTo   = dateRangeInvalid ? undefined : (dateTo   || undefined);
 
   // Build query params — memoised so hooks don't thrash
   const listParams = useMemo(() => ({
+    caseId:   caseFilter || undefined,
     search:   search.trim() || undefined,
     category: catFilter     || undefined,
-    firmOnly: firmOnly      || undefined,
+    // The API rejects firmOnly + caseId together: they describe opposite scopes.
+    firmOnly: caseFilter ? undefined : (firmOnly || undefined),
     billable: billableFilter === 'true' ? true : billableFilter === 'false' ? false : undefined,
     billed:   billedFilter   === 'true' ? true : billedFilter   === 'false' ? false : undefined,
-    dateFrom: dateFrom || undefined,
-    dateTo:   dateTo   || undefined,
+    dateFrom: filterFrom,
+    dateTo:   filterTo,
     page,
     limit: PAGE_SIZE,
-  }), [search, catFilter, firmOnly, billableFilter, billedFilter, dateFrom, dateTo, page]);
+  }), [caseFilter, search, catFilter, firmOnly, billableFilter, billedFilter, dateFrom, dateTo, dateRangeInvalid, page]);
 
   const expenses = useListExpenses(listParams, {
     query: { queryKey: getListExpensesQueryKey(listParams), staleTime: 15000 },
@@ -579,12 +712,26 @@ export function ExpensesPage() {
     setSearch(''); setCatFilter(''); setFirmOnly(false);
     setBillableFilter(''); setBilledFilter('');
     setDateFrom(''); setDateTo(''); setPage(1);
-  }, []);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('caseId');
+      return next;
+    });
+  }, [setSearchParams]);
 
-  const hasFilters = !!(search || catFilter || firmOnly || billableFilter || billedFilter || dateFrom || dateTo);
+  // KPI cards act as one-click filters (same behaviour as the invoice register).
+  const applyKpiFilter = (next: Partial<ExpenseKpiFilters>) => {
+    if (next.billable !== undefined) setBillableFilter(next.billable);
+    if (next.billed   !== undefined) setBilledFilter(next.billed);
+    if (next.firmOnly !== undefined) setFirmOnly(next.firmOnly);
+    setPage(1);
+  };
+
+  const hasFilters = !!(caseFilter || search || catFilter || firmOnly || billableFilter || billedFilter || dateFrom || dateTo);
 
   const handleDelete = (exp: Expense) => {
     if (!window.confirm(`Delete "${exp.description}" (${money(exp.amount)})?`)) return;
+    setActionError('');
     del.mutate(
       { id: exp.id },
       {
@@ -592,6 +739,22 @@ export function ExpensesPage() {
           qc.invalidateQueries({ queryKey: getListExpensesQueryKey() });
           qc.invalidateQueries({ queryKey: getGetExpenseSummaryQueryKey() });
         },
+        onError: (e: any) => setActionError(e?.message ?? 'The expense could not be deleted.'),
+      },
+    );
+  };
+
+  // One-click billed/unbilled toggle — unbilling matters when an invoice is voided.
+  const toggleBilled = (exp: Expense) => {
+    setActionError('');
+    update.mutate(
+      { id: exp.id, data: { isBilled: !exp.isBilled } },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getListExpensesQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetExpenseSummaryQueryKey() });
+        },
+        onError: (e: any) => setActionError(e?.message ?? 'The expense could not be updated.'),
       },
     );
   };
@@ -610,6 +773,7 @@ export function ExpensesPage() {
   // CSV export — direct browser download
   const handleExport = () => {
     const sp = new URLSearchParams();
+    if (listParams.caseId)   sp.set('caseId',   listParams.caseId);
     if (listParams.search)   sp.set('search',   listParams.search);
     if (listParams.category) sp.set('category', listParams.category);
     if (listParams.firmOnly) sp.set('firmOnly', 'true');
@@ -650,13 +814,49 @@ export function ExpensesPage() {
         </div>
       </div>
 
+      {/* ── Case scope banner ────────────────────────────────────────── */}
+      {caseFilter && (
+        <div
+          className="card"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', marginBottom: 16,
+            borderColor: 'hsl(var(--chart-4) / .35)', background: 'hsl(var(--chart-4) / .06)',
+          }}
+        >
+          <Briefcase size={16} style={{ color: 'hsl(var(--chart-4))', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              {scopeCase.data
+                ? `Case #${scopeCase.data.caseNumber} — ${scopeCase.data.clientName}`
+                : scopeCase.isError ? 'Case not found' : 'Scoped to case'}
+            </div>
+            <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+              Only costs linked to this case are shown — firm-level expenses are excluded.
+            </div>
+          </div>
+          <Link href={`/cases/${caseFilter}`} className="button button-ghost" style={{ minHeight: 30, padding: '0 10px' }}>
+            Open case <ExternalLink size={12} />
+          </Link>
+          <button className="button button-ghost" style={{ minHeight: 30, padding: '0 10px' }} onClick={() => setCaseScope('')}>
+            <X size={13} /> Clear scope
+          </button>
+        </div>
+      )}
+
       {/* ── KPI strip ────────────────────────────────────────────────── */}
-      <ExpenseKpis dateFrom={dateFrom || undefined} dateTo={dateTo || undefined} />
+      <ExpenseKpis
+        dateFrom={filterFrom}
+        dateTo={filterTo}
+        caseId={caseFilter || undefined}
+        filters={{ billable: billableFilter, billed: billedFilter, firmOnly }}
+        onSelect={applyKpiFilter}
+      />
 
       {/* ── Add/Edit form ─────────────────────────────────────────────── */}
       {showForm && (
         <ExpenseForm
           editing={editingExp}
+          defaultCaseId={caseFilter || undefined}
           onSuccess={handleFormSuccess}
           onCancel={() => { setShowForm(false); setEditingExp(null); }}
         />
@@ -665,9 +865,39 @@ export function ExpensesPage() {
       {/* ── Summary charts ────────────────────────────────────────────── */}
       {showSummary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,.8fr) minmax(0,.8fr)', gap: 14, marginBottom: 22 }}>
-          <CategoryBreakdown dateFrom={dateFrom || undefined} dateTo={dateTo || undefined} />
-          <MonthlyTrend      dateFrom={dateFrom || undefined} dateTo={dateTo || undefined} />
-          <TopVendors        dateFrom={dateFrom || undefined} dateTo={dateTo || undefined} />
+          <CategoryBreakdown dateFrom={filterFrom} dateTo={filterTo} caseId={caseFilter || undefined} />
+          <MonthlyTrend      dateFrom={filterFrom} dateTo={filterTo} caseId={caseFilter || undefined} />
+          <TopVendors        dateFrom={filterFrom} dateTo={filterTo} caseId={caseFilter || undefined} />
+        </div>
+      )}
+
+      {/* ── Guards that would otherwise fail silently ─────────────────── */}
+      {dateRangeInvalid && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', marginBottom: 14,
+          borderRadius: 6, fontSize: 12, color: 'hsl(var(--destructive))',
+          background: 'hsl(var(--destructive) / .07)', border: '1px solid hsl(var(--destructive) / .25)',
+        }}>
+          <AlertCircle size={14} />
+          “From” is later than “To”, so the date range is ignored. Swap the dates to filter.
+        </div>
+      )}
+      {actionError && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', marginBottom: 14,
+          borderRadius: 6, fontSize: 12, color: 'hsl(var(--destructive))',
+          background: 'hsl(var(--destructive) / .07)', border: '1px solid hsl(var(--destructive) / .25)',
+        }}>
+          <AlertCircle size={14} />
+          <span style={{ flex: 1 }}>{actionError}</span>
+          <button
+            className="button button-ghost"
+            style={{ minHeight: 24, padding: '0 6px', color: 'inherit' }}
+            onClick={() => setActionError('')}
+            title="Dismiss"
+          >
+            <X size={12} />
+          </button>
         </div>
       )}
 
@@ -713,10 +943,16 @@ export function ExpensesPage() {
             <option value="false">Unbilled</option>
           </select>
 
-          {/* Firm-only toggle */}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          {/* Firm-only toggle — cannot combine with a case scope */}
+          <label
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, whiteSpace: 'nowrap',
+              cursor: caseFilter ? 'not-allowed' : 'pointer', opacity: caseFilter ? .45 : 1,
+            }}
+            title={caseFilter ? 'Clear the case scope to see firm-level costs' : 'Show only costs that are not linked to a case'}
+          >
             <input
-              type="checkbox" checked={firmOnly}
+              type="checkbox" checked={firmOnly} disabled={!!caseFilter}
               onChange={(e) => { setFirmOnly(e.target.checked); setPage(1); }}
             />
             Firm-level only
@@ -725,12 +961,12 @@ export function ExpensesPage() {
           {/* Date range */}
           <input
             className="field" type="date" style={{ width: 138 }}
-            title="From date" value={dateFrom}
+            title="From date" value={dateFrom} max={dateTo || undefined}
             onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
           />
           <input
             className="field" type="date" style={{ width: 138 }}
-            title="To date" value={dateTo}
+            title="To date" value={dateTo} min={dateFrom || undefined}
             onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
           />
 
@@ -750,7 +986,7 @@ export function ExpensesPage() {
             borderBottom: '1px solid hsl(var(--border))', fontSize: 11,
           }}>
             <span className="muted">
-              {total} expense{total !== 1 ? 's' : ''} matching filters
+              {total} expense{total !== 1 ? 's' : ''} {hasFilters ? 'matching filters' : 'in total'}
             </span>
             <span style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, fontSize: 12 }}>
               Total: {money(totalAmt)}
@@ -815,10 +1051,26 @@ export function ExpensesPage() {
                     </td>
                     <td>
                       {exp.isBillable ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: exp.isBilled ? 'hsl(var(--chart-2))' : 'hsl(var(--accent))' }}>
-                          <Check size={12} />
-                          {exp.isBilled ? 'Billed' : 'Unbilled'}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleBilled(exp)}
+                          disabled={update.isPending}
+                          title={exp.isBilled
+                            ? 'Billed to the client — click to undo (e.g. after voiding the invoice)'
+                            : 'Mark this cost as billed to the client'}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            minHeight: 24, padding: '0 8px', borderRadius: 5, fontSize: 10,
+                            fontFamily: 'var(--app-font-mono)', fontWeight: 700, letterSpacing: '.02em',
+                            cursor: update.isPending ? 'wait' : 'pointer',
+                            border: `1px solid ${exp.isBilled ? 'hsl(var(--chart-2) / .45)' : 'hsl(var(--accent) / .45)'}`,
+                            background: exp.isBilled ? 'hsl(var(--chart-2) / .1)' : 'transparent',
+                            color: exp.isBilled ? 'hsl(var(--chart-2))' : 'hsl(var(--accent))',
+                          }}
+                        >
+                          {exp.isBilled ? <RotateCcw size={11} /> : <Check size={11} />}
+                          {exp.isBilled ? 'Billed' : 'Mark billed'}
+                        </button>
                       ) : (
                         <span className="muted" style={{ fontSize: 11 }}>—</span>
                       )}
@@ -883,8 +1135,10 @@ export function ExpensesPage() {
 // ─── Compact expense list for case detail pages ───────────────────────────────
 export function CaseExpensesPanel({ caseId }: { caseId: string }) {
   const [showForm, setShowForm] = useState(false);
+  const [err, setErr] = useState('');
   const qc = useQueryClient();
   const del = useDeleteExpense();
+  const update = useUpdateExpense();
 
   const params = useMemo(() => ({ caseId, limit: 50 }), [caseId]);
   const expenses = useListExpenses(params, {
@@ -893,6 +1147,23 @@ export function CaseExpensesPanel({ caseId }: { caseId: string }) {
 
   const rows     = expenses.data?.data      ?? [];
   const totalAmt = expenses.data?.totalAmount ?? 0;
+
+  // Case totals feed both this panel and the register / KPI strip.
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: getListExpensesQueryKey() });
+    qc.invalidateQueries({ queryKey: getGetExpenseSummaryQueryKey() });
+  };
+
+  const toggleBilled = (exp: Expense) => {
+    setErr('');
+    update.mutate(
+      { id: exp.id, data: { isBilled: !exp.isBilled } },
+      {
+        onSuccess: refresh,
+        onError: (e: any) => setErr(e?.message ?? 'Could not update this expense.'),
+      },
+    );
+  };
 
   return (
     <div>
@@ -918,10 +1189,14 @@ export function CaseExpensesPanel({ caseId }: { caseId: string }) {
           defaultCaseId={caseId}
           onSuccess={() => {
             setShowForm(false);
-            qc.invalidateQueries({ queryKey: getListExpensesQueryKey({ caseId }) });
+            refresh();
           }}
           onCancel={() => setShowForm(false)}
         />
+      )}
+
+      {err && (
+        <p style={{ color: 'hsl(var(--destructive))', fontSize: 11, margin: '0 0 8px' }}>{err}</p>
       )}
 
       {expenses.isLoading ? (
@@ -945,9 +1220,23 @@ export function CaseExpensesPanel({ caseId }: { caseId: string }) {
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{exp.description}</span>
               <CatPill cat={exp.category} />
               {exp.isBillable && (
-                <span style={{ fontSize: 10, color: exp.isBilled ? 'hsl(var(--chart-2))' : 'hsl(var(--accent))' }}>
+                <button
+                  type="button"
+                  disabled={update.isPending}
+                  onClick={() => toggleBilled(exp)}
+                  title={exp.isBilled
+                    ? 'Billed to the client — click to undo (e.g. after voiding the invoice)'
+                    : 'Mark this cost as billed to the client'}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                    border: `1px solid ${exp.isBilled ? 'hsl(var(--chart-2) / .45)' : 'hsl(var(--accent) / .45)'}`,
+                    background: 'transparent', borderRadius: 4, padding: '1px 6px',
+                    cursor: 'pointer', fontSize: 10, fontFamily: 'var(--app-font-mono)', fontWeight: 700,
+                    color: exp.isBilled ? 'hsl(var(--chart-2))' : 'hsl(var(--accent))',
+                  }}
+                >
                   {exp.isBilled ? '✓ Billed' : 'Unbilled'}
-                </span>
+                </button>
               )}
               <span style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700, whiteSpace: 'nowrap' }}>{money(exp.amount)}</span>
               <button
@@ -955,8 +1244,10 @@ export function CaseExpensesPanel({ caseId }: { caseId: string }) {
                 style={{ minHeight: 24, padding: '0 6px' }}
                 onClick={() => {
                   if (!window.confirm(`Delete "${exp.description}"?`)) return;
+                  setErr('');
                   del.mutate({ id: exp.id }, {
-                    onSuccess: () => qc.invalidateQueries({ queryKey: getListExpensesQueryKey({ caseId }) }),
+                    onSuccess: refresh,
+                    onError: (e: any) => setErr(e?.message ?? 'Could not delete this expense.'),
                   });
                 }}
               >

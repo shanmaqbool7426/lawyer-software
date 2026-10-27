@@ -1,15 +1,17 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Link } from 'wouter';
+import { Link, useSearch } from 'wouter';
 import {
   AlertTriangle, ArrowRight, Check, ExternalLink,
-  FolderOpen, Loader2, Search, ShieldCheck, User, X,
+  FolderOpen, Loader2, MapPin, Search, ShieldCheck, User, X,
 } from 'lucide-react';
 import {
   useUnifiedSearch,
   useCheckClientConflict,
   useCheckCaseConflict,
+  useCheckIncidentConflict,
   getCheckClientConflictQueryKey,
   getCheckCaseConflictQueryKey,
+  getCheckIncidentConflictQueryKey,
 } from '@workspace/api-client-react';
 import type {
   ClientConflictResult,
@@ -17,14 +19,22 @@ import type {
   ConflictMatchType,
   CheckClientConflictParams,
   CheckCaseConflictParams,
+  CheckIncidentParams,
+  IncidentMatch,
   UnifiedSearchClient,
   UnifiedSearchCase,
 } from '@workspace/api-client-react';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-const fmtDate = (v?: string | Date | null) =>
-  v ? new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })
-        .format(new Date(v as string)) : '—';
+// Date-only values arrive as UTC-midnight ISO strings; format them on their own
+// calendar day so they do not shift a day in timezones west of UTC.
+const fmtDate = (v?: string | Date | null) => {
+  if (!v) return '—';
+  const d = new Date(v as string);
+  if (Number.isNaN(d.getTime())) return '—';
+  const utcMidnight = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return new Intl.DateTimeFormat('en-CA', { month: 'short', day: 'numeric', year: 'numeric', ...(utcMidnight ? { timeZone: 'UTC' } : {}) }).format(d);
+};
 
 function useDebounce<T>(value: T, delay = 400): T {
   const [debounced, setDebounced] = useState(value);
@@ -158,9 +168,141 @@ function CaseConflictCard({ result }: { result: CaseConflictResult }) {
   );
 }
 
+// ─── Same stop / co-accused panel ─────────────────────────────────────────────
+// Two files from one collision are the classic traffic conflict: you cannot act
+// for both drivers. A shared ticket, officer+date, or road+date surfaces it.
+
+function SameStopPanel() {
+  const [form, setForm] = useState({ offenceDate: '', ticketNumber: '', officerName: '', offenceLocation: '' });
+  const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const d = useDebounce(form, 450);
+
+  const params = useMemo<CheckIncidentParams>(() => ({
+    offenceDate:      d.offenceDate || undefined,
+    ticketNumber:     d.ticketNumber.trim().length  >= 3 ? d.ticketNumber.trim()  : undefined,
+    officerName:      d.officerName.trim().length   >= 3 ? d.officerName.trim()   : undefined,
+    offenceLocation:  d.offenceLocation.trim().length >= 3 ? d.offenceLocation.trim() : undefined,
+  }), [d]);
+
+  const check = useCheckIncidentConflict(params, {
+    query: { queryKey: getCheckIncidentConflictQueryKey(params), staleTime: 8000 },
+  });
+
+  const results = (check.data?.results ?? []) as IncidentMatch[];
+  const hot = results.some((r) => r.sameIncident);
+  const armed = !!(params.offenceDate || params.ticketNumber)
+    && !!(params.ticketNumber || params.officerName || params.offenceLocation);
+  const clear = armed && !check.isFetching && !results.length;
+
+  return (
+    <div className="card" style={{ padding: '16px 18px', marginBottom: 24 }} data-testid="panel-same-stop">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 4 }}>
+        <MapPin size={16} style={{ color: 'hsl(var(--accent))' }} />
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Same stop &amp; co-accused</div>
+        {check.isFetching && <Loader2 size={13} className="animate-spin" style={{ color: 'hsl(var(--muted-foreground))' }} />}
+      </div>
+      <div style={{ fontSize: 11, color: 'hsl(var(--muted-foreground))', marginBottom: 14, lineHeight: 1.5 }}>
+        Already acting for someone else from this incident? Enter the offence date plus the ticket,
+        the officer, or the location.
+      </div>
+
+      <div className="form-grid">
+        <div className="form-field">
+          <label className="form-label">Offence date</label>
+          <input className="field" type="date" data-testid="input-incident-date"
+            value={form.offenceDate} onChange={(e) => set('offenceDate', e.target.value)} />
+        </div>
+        <div className="form-field">
+          <label className="form-label">Ticket number</label>
+          <input className="field" data-testid="input-incident-ticket"
+            value={form.ticketNumber} onChange={(e) => set('ticketNumber', e.target.value)} placeholder="T12345678" />
+        </div>
+        <div className="form-field">
+          <label className="form-label">Officer</label>
+          <input className="field" data-testid="input-incident-officer"
+            value={form.officerName} onChange={(e) => set('officerName', e.target.value)} placeholder="Const. J. Whitfield" />
+        </div>
+        <div className="form-field">
+          <label className="form-label">Offence location</label>
+          <input className="field" data-testid="input-incident-location"
+            value={form.offenceLocation} onChange={(e) => set('offenceLocation', e.target.value)} placeholder="Hwy 410 @ Courtneypark" />
+        </div>
+      </div>
+
+      {results.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          {hot && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 9, padding: '10px 12px',
+              borderRadius: 7, marginBottom: 10,
+              background: 'hsl(var(--destructive) / .08)',
+              border: '1px solid hsl(var(--destructive) / .32)',
+            }} data-testid="alert-same-incident">
+              <AlertTriangle size={15} style={{ color: 'hsl(var(--destructive))', flexShrink: 0 }} />
+              <div style={{ fontSize: 12, color: 'hsl(var(--destructive))', fontWeight: 700 }}>
+                Same incident — the firm already has a file for another party at this stop.
+                Acting for both would be a conflict.
+              </div>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {results.map((r) => (
+              <div key={r.caseId} className="card" style={{
+                padding: '11px 14px', display: 'flex', alignItems: 'center', gap: 12,
+                borderLeft: `3px solid ${r.sameIncident ? '#b8403f' : MATCH_META[r.matchType].color}`,
+              }}>
+                <div style={{ fontFamily: 'var(--app-font-mono)', fontSize: 13, fontWeight: 700,
+                  color: 'hsl(var(--accent))', flexShrink: 0, width: 44 }}>
+                  #{r.caseNumber}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{r.clientName}</div>
+                  <div style={{ fontSize: 11, color: 'hsl(var(--muted-foreground))', marginTop: 3,
+                    display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    {r.offenceDate && <span>{fmtDate(r.offenceDate)}</span>}
+                    {r.officerName && <span>{r.officerName}</span>}
+                    {r.offenceLocation && <span>{r.offenceLocation}</span>}
+                    {r.ticketNumber && <span>Ticket: {r.ticketNumber}</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                    {r.reasons.map((reason, i) => (
+                      <span key={i} style={{ fontSize: 10, color: 'hsl(var(--muted-foreground))',
+                        background: 'hsl(var(--muted))', padding: '1px 7px', borderRadius: 4 }}>
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                  <MatchBadge type={r.matchType} score={r.score} />
+                  <Link href={`/cases/${r.caseId}`} className="button button-ghost"
+                    style={{ minHeight: 26, padding: '0 9px', fontSize: 11 }}>
+                    View case <ExternalLink size={11} />
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {clear && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14,
+          fontSize: 12, color: 'hsl(var(--chart-2))', fontWeight: 600 }} data-testid="status-incident-clear">
+          <Check size={14} /> No other file on record for this stop.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Conflict Checker Page ───────────────────────────────────────────────
 export function ConflictCheckerPage() {
-  const [query, setQuery]     = useState('');
+  // ?q= lets other screens hand a name or ticket to the checker.
+  const urlSearch = useSearch();
+  const urlQuery = useMemo(() => new URLSearchParams(urlSearch).get('q') ?? '', [urlSearch]);
+  const [query, setQuery]     = useState(urlQuery);
+  useEffect(() => { setQuery(urlQuery); }, [urlQuery]);
   const debouncedQ            = useDebounce(query, 350);
   const [activeTab, setActiveTab] = useState<'all' | 'clients' | 'cases'>('all');
 
@@ -210,6 +352,9 @@ export function ConflictCheckerPage() {
           </div>
         ))}
       </div>
+
+      {/* Same stop / co-accused */}
+      <SameStopPanel />
 
       {/* Search bar */}
       <div style={{ position: 'relative', marginBottom: 20 }}>
@@ -397,6 +542,78 @@ export function InlineClientConflictWarning({ name, phone, email, excludeId }: I
               </Link>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface InlineIncidentWarningProps {
+  offenceDate?: string;
+  officerName?: string;
+  officerBadgeNumber?: string;
+  offenceLocation?: string;
+  ticketNumber?: string;
+  clientId?: string;
+  excludeCaseId?: string;
+}
+
+// Silent unless the firm already has a file for another party at the same stop.
+// Intake must never be blocked, only warned.
+export function InlineIncidentWarning({
+  offenceDate, officerName, officerBadgeNumber, offenceLocation, ticketNumber, clientId, excludeCaseId,
+}: InlineIncidentWarningProps) {
+  const dDate     = useDebounce(offenceDate ?? '', 500);
+  const dTicket   = useDebounce(ticketNumber ?? '', 500);
+  const dOfficer  = useDebounce(officerName ?? '', 500);
+  const dBadge    = useDebounce(officerBadgeNumber ?? '', 500);
+  const dLocation = useDebounce(offenceLocation ?? '', 500);
+
+  const params = useMemo<CheckIncidentParams>(() => ({
+    offenceDate:      dDate || undefined,
+    ticketNumber:     dTicket.trim().length   >= 3 ? dTicket.trim()   : undefined,
+    officerName:      dOfficer.trim().length  >= 3 ? dOfficer.trim()  : undefined,
+    officerBadgeNumber: dBadge.trim() || undefined,
+    offenceLocation:  dLocation.trim().length >= 3 ? dLocation.trim() : undefined,
+    clientId:         clientId || undefined,
+    excludeCaseId,
+  }), [dDate, dTicket, dOfficer, dBadge, dLocation, clientId, excludeCaseId]);
+
+  const conflict = useCheckIncidentConflict(params, {
+    query: { queryKey: getCheckIncidentConflictQueryKey(params), staleTime: 8000 },
+  });
+
+  const results = ((conflict.data?.results ?? []) as IncidentMatch[]).filter((r) => r.sameIncident);
+  if (!results.length) return null;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '10px 12px', borderRadius: 7, marginTop: 6,
+      background: 'hsl(var(--destructive) / .07)',
+      border: '1px solid hsl(var(--destructive) / .3)',
+      animation: 'fade-in .2s ease both',
+    }} data-testid="warning-same-incident">
+      <AlertTriangle size={15} style={{ color: 'hsl(var(--destructive))', flexShrink: 0, marginTop: 1 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 12, color: 'hsl(var(--destructive))' }}>
+          Possible conflict — another file from this same stop
+        </div>
+        <div style={{ fontSize: 11, color: 'hsl(var(--muted-foreground))', marginTop: 3 }}>
+          {results.slice(0, 3).map((r) => (
+            <div key={r.caseId} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'var(--app-font-mono)', fontWeight: 700 }}>#{r.caseNumber}</span>
+              <span>{r.clientName}</span>
+              {r.reasons[0] && <span>· {r.reasons[0]}</span>}
+              <Link href={`/cases/${r.caseId}`} style={{ color: 'hsl(var(--accent))',
+                textDecoration: 'none', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                View <ExternalLink size={10} />
+              </Link>
+            </div>
+          ))}
+          <div style={{ marginTop: 5 }}>
+            If this is the same incident, the firm may not be able to act for both drivers.
+          </div>
         </div>
       </div>
     </div>

@@ -51,6 +51,9 @@ temp_interactive_push.bat
 .vercel-tmp/
 .vercel/
 
+# QA screenshots from browser verification runs
+qa-shots/
+
 # Local env files & Clerk accountless state (never commit keys)
 .env
 .env.local

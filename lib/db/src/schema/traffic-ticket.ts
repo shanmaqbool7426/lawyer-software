@@ -13,6 +13,10 @@ const clientSchema = new Schema(
     leadSourceChannel: { type: String, required: true },
     leadSourceDetail: { type: String, default: null },
     portalToken: { type: String, default: null, index: true },
+    // Due diligence trail: when the firm last screened this client for a
+    // conflict, and who did it. Null means it has never been recorded.
+    conflictCheckedAt: { type: Date, default: null },
+    conflictCheckedBy: { type: String, default: null },
     isDeleted: { type: Boolean, required: true, default: false },
     createdAt: { type: Date, default: () => new Date() },
   },
@@ -114,6 +118,9 @@ const paymentSchema = new Schema(
     caseId:          { type: String, required: true, index: true },
     amount:          { type: Number, required: true },
     date:            { type: String, required: true },
+    // Numbered client receipt ("R-2026-0001"). Assigned once, on creation, and
+    // kept on the row even after a void — the receipt is part of the audit trail.
+    receiptNumber:   { type: String, default: null },
     // Extended payment fields
     method:          { type: String, default: null },  // "Cash"|"Cheque"|"E-Transfer"|"Wire"|"Card"|"Money Order"|"Other"
     reference:       { type: String, default: null },  // cheque#, e-transfer ref, transaction ID
@@ -135,6 +142,12 @@ const paymentSchema = new Schema(
 );
 paymentSchema.index({ tenantId: 1, caseId: 1, date: -1 });
 paymentSchema.index({ tenantId: 1, isVoided: 1 });
+// Partial: legacy rows written before receipts existed have no number and must
+// not collide with each other on null.
+paymentSchema.index(
+  { tenantId: 1, receiptNumber: 1 },
+  { unique: true, partialFilterExpression: { receiptNumber: { $type: "string" } } },
+);
 
 const noteSchema = new Schema(
   {
@@ -249,6 +262,13 @@ const invoiceSchema = new Schema(
     taxAmount: { type: Number, required: true, default: 0 },
     total: { type: Number, required: true, default: 0 },
     notes: { type: String, default: null },
+    // Set when the invoice is issued to the client / settled, so the register can
+    // show "sent on" and "paid on" without digging through audit history.
+    sentAt: { type: String, default: null },
+    paidAt: { type: String, default: null },
+    // The ledger receipt raised when this invoice was settled. Kept so un-marking
+    // a paid invoice can void exactly that receipt instead of guessing.
+    paymentId: { type: String, default: null },
     isDeleted: { type: Boolean, required: true, default: false },
     createdAt: { type: Date, default: () => new Date() },
     updatedAt: { type: Date, default: () => new Date() },
@@ -265,6 +285,29 @@ const counterSchema = new Schema(
   { versionKey: false },
 );
 
+// ─── Team membership ────────────────────────────────────────────────────────
+// One row per person allowed to sign in to a workspace. `permissions` holds
+// the sidebar module keys the owner granted; the owner implicitly holds all of
+// them, so the list is only meaningful for staff. Rows are matched to Clerk
+// identities by clerkUserId, never by email, because email can change.
+const memberSchema = new Schema(
+  {
+    id: { type: String, required: true, unique: true, index: true, default: uid },
+    tenantId: { type: String, required: true, index: true },
+    clerkUserId: { type: String, required: true, index: true },
+    name: { type: String, required: true },
+    email: { type: String, default: null },
+    role: { type: String, required: true, default: "staff", enum: ["owner", "staff"] },
+    permissions: { type: [String], default: [] },
+    status: { type: String, required: true, default: "active", enum: ["active", "disabled"] },
+    createdBy: { type: String, default: null },
+    lastSeenAt: { type: Date, default: null },
+    createdAt: { type: Date, default: () => new Date() },
+  },
+  { versionKey: false },
+);
+memberSchema.index({ tenantId: 1, clerkUserId: 1 }, { unique: true });
+
 export type Client = InferSchemaType<typeof clientSchema>;
 export type Case = InferSchemaType<typeof caseSchema>;
 export type Payment = InferSchemaType<typeof paymentSchema>;
@@ -276,6 +319,7 @@ export type TrustEntry = InferSchemaType<typeof trustEntrySchema>;
 export type SignatureRequest = InferSchemaType<typeof signatureRequestSchema>;
 export type InvoiceItem = InferSchemaType<typeof invoiceItemSchema>;
 export type Invoice = InferSchemaType<typeof invoiceSchema>;
+export type Member = InferSchemaType<typeof memberSchema>;
 
 export const ClientModel: Model<Client> = model<Client>("Client", clientSchema);
 export const CaseModel: Model<Case> = model<Case>("Case", caseSchema);
@@ -287,6 +331,7 @@ export const OrganizationModel: Model<Organization> = model<Organization>("Organ
 export const TrustEntryModel: Model<TrustEntry> = model<TrustEntry>("TrustEntry", trustEntrySchema);
 export const SignatureRequestModel: Model<SignatureRequest> = model<SignatureRequest>("SignatureRequest", signatureRequestSchema);
 export const InvoiceModel: Model<Invoice> = model<Invoice>("Invoice", invoiceSchema);
+export const MemberModel: Model<Member> = model<Member>("Member", memberSchema);
 
 // ─── Expense ─────────────────────────────────────────────────────────────────
 export const EXPENSE_CATEGORIES = [
@@ -370,6 +415,17 @@ const appointmentSchema = new Schema(
     location:     { type: String, default: null },
     notes:        { type: String, default: null },
     status:       { type: String, required: true, default: "scheduled" },
+    // Court dates are entered on the case; they are mirrored here (all-day) so
+    // the schedule, reminders and Google sync all read one collection.
+    courtDateId:  { type: String, default: null, index: true },
+    // Set when the row is mirrored from a calendar Docketline does not own
+    // ("google:primary"). Read-only: never pushed, never editable here.
+    externalSource: { type: String, default: null, index: true },
+    allDay:       { type: Boolean, required: true, default: false },
+    // Google Calendar linkage — set by the push/pull sync engine.
+    googleEventId:   { type: String, default: null },
+    googleSyncedAt:  { type: Date,   default: null },
+    googleSyncError: { type: String, default: null },
     reminderSent: { type: Boolean, required: true, default: false },
     isDeleted:    { type: Boolean, required: true, default: false },
     createdAt:    { type: Date, default: () => new Date() },
@@ -384,6 +440,36 @@ appointmentSchema.index({ tenantId: 1, clientId: 1, startAt: 1 });
 
 export type Appointment = InferSchemaType<typeof appointmentSchema>;
 export const AppointmentModel: Model<Appointment> = model<Appointment>("Appointment", appointmentSchema);
+
+// ─── Google Calendar connection ───────────────────────────────────────────────
+// One connection per lawyer per workspace. The refresh token is stored encrypted
+// (AES-256-GCM) because the API runs serverless and cannot keep it in memory.
+const calendarConnectionSchema = new Schema(
+  {
+    id:                   { type: String, required: true, unique: true, index: true, default: uid },
+    tenantId:             { type: String, required: true, index: true },
+    userId:               { type: String, required: true, index: true },
+    accountEmail:         { type: String, default: null },
+    calendarId:           { type: String, default: null },
+    calendarName:         { type: String, default: null },
+    refreshToken:         { type: String, required: true },
+    accessToken:          { type: String, default: null },
+    accessTokenExpiresAt: { type: Date,   default: null },
+    scope:                { type: String, default: null },
+    // Incremental pull cursor — Google returns only what changed since this token.
+    syncToken:            { type: String, default: null },
+    lastSyncedAt:         { type: Date,   default: null },
+    lastError:            { type: String, default: null },
+    createdAt:            { type: Date, default: () => new Date() },
+    updatedAt:            { type: Date, default: () => new Date() },
+  },
+  { versionKey: false },
+);
+calendarConnectionSchema.index({ tenantId: 1, userId: 1 }, { unique: true });
+
+export type CalendarConnection = InferSchemaType<typeof calendarConnectionSchema>;
+export const CalendarConnectionModel: Model<CalendarConnection> =
+  model<CalendarConnection>("CalendarConnection", calendarConnectionSchema);
 
 export const CounterModel = model(
   "Counter",

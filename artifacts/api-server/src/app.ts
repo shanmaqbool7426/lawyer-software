@@ -3,7 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
-import router, { publicRouter } from "./routes";
+import router, { publicRouter, googlePublicRouter } from "./routes";
 import { logger } from "./lib/logger";
 import {
   CLERK_PROXY_PATH,
@@ -75,6 +75,9 @@ app.get("/api/healthz", (_req, res) => {
 // the subscribable calendar feed. Mounted before the auth guard so clients
 // can open these links without a session.
 app.use("/api", publicRouter);
+// Google redirects the OAuth callback here without a session; the signed state
+// parameter carries the workspace, so it must also stay off the auth guard.
+app.use("/api", googlePublicRouter);
 
 app.use("/api", (req, res, next) => {
   // @clerk/express v2 exposes req.auth as an AuthFn (a function returning the

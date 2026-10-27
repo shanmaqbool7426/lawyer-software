@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type {
   QueryFunction, QueryKey,
+  UseMutationOptions, UseMutationResult,
   UseQueryOptions, UseQueryResult,
 } from '@tanstack/react-query';
 import type {
@@ -9,6 +10,9 @@ import type {
   UnifiedSearchResponse,
   CheckClientConflictParams,
   CheckCaseConflictParams,
+  CheckIncidentParams,
+  IncidentConflictResponse,
+  RecordConflictCheckResponse,
 } from './api.schemas';
 import { customFetch } from '../custom-fetch';
 import type { ErrorType } from '../custom-fetch';
@@ -108,7 +112,87 @@ export function useCheckCaseConflict<
   return withQueryKey(query, qo.queryKey);
 }
 
-// ── Unified search ────────────────────────────────────────────────────────────
+// ── Check the same stop (co-accused) ─────────────────────────────────────────
+
+export const getCheckIncidentConflictQueryKey = (params: CheckIncidentParams) =>
+  [`/api/conflict-check/incidents`, params] as const;
+
+export const checkIncidentConflict = async (
+  params: CheckIncidentParams,
+  options?: Parameters<typeof customFetch>[1],
+): Promise<IncidentConflictResponse> =>
+  customFetch<IncidentConflictResponse>(
+    `/api/conflict-check/incidents${buildQs(params as Record<string, string | undefined>)}`,
+    { ...options, method: 'GET' },
+  );
+
+export function useCheckIncidentConflict<
+  TData = Awaited<ReturnType<typeof checkIncidentConflict>>,
+  TError = ErrorType<unknown>,
+>(
+  params: CheckIncidentParams,
+  options?: { query?: UseQueryOptions<Awaited<ReturnType<typeof checkIncidentConflict>>, TError, TData>; request?: SecondParameter<typeof customFetch> },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  // The API needs a date or ticket, plus one more identifying detail.
+  const hasAnchor = !!(params.offenceDate || params.ticketNumber);
+  const hasDetail = !!(params.ticketNumber || params.officerName || params.officerBadgeNumber || params.offenceLocation);
+  const queryKey = queryOptions?.queryKey ?? getCheckIncidentConflictQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof checkIncidentConflict>>> = ({ signal }) =>
+    checkIncidentConflict(params, { signal, ...requestOptions });
+  const qo = {
+    queryKey, queryFn,
+    enabled: hasAnchor && hasDetail,
+    staleTime: 8000,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof checkIncidentConflict>>, TError, TData> & { queryKey: QueryKey };
+  const query = useQuery(qo) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return withQueryKey(query, qo.queryKey);
+}
+
+// ── Record a conflict screening on a client ──────────────────────────────────
+
+export const getRecordClientConflictCheckUrl = (id: string) =>
+  `/api/clients/${id}/conflict-check`;
+
+export const recordClientConflictCheck = async (
+  id: string,
+  data: { checkedBy?: string } = {},
+  options?: Parameters<typeof customFetch>[1],
+): Promise<RecordConflictCheckResponse> =>
+  customFetch<RecordConflictCheckResponse>(getRecordClientConflictCheckUrl(id), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(data),
+  });
+
+export function useRecordClientConflictCheck<
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordClientConflictCheck>>,
+    TError,
+    { id: string; checkedBy?: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recordClientConflictCheck>>,
+  TError,
+  { id: string; checkedBy?: string },
+  TContext
+> {
+  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
+  return useMutation({
+    mutationFn: ({ id, checkedBy }) => recordClientConflictCheck(id, { checkedBy }, requestOptions),
+    ...mutationOptions,
+  });
+}
+
+
+// ── Unified search ───────────────────────────────────────────────────────────
 
 export const getUnifiedSearchQueryKey = (q: string) =>
   [`/api/conflict-check/search`, q] as const;

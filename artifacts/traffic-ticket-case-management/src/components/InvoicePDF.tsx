@@ -220,14 +220,25 @@ const s = StyleSheet.create({
 const fmt = (v = 0) =>
   new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(v);
 
-const fmtDate = (v?: string | null) =>
-  v
-    ? new Intl.DateTimeFormat('en-CA', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      }).format(new Date(v))
-    : '—';
+// Date-only values arrive as UTC-midnight ISO strings; format them on their own
+// calendar day so they do not shift a day in timezones west of UTC.
+const fmtDate = (v?: string | null) => {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '—';
+  const utcMidnight = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return new Intl.DateTimeFormat('en-CA', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    ...(utcMidnight ? { timeZone: 'UTC' } : {}),
+  }).format(d);
+};
+const todayLocal = () => {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   draft:  { bg: '#f0f0ef', text: C.muted },
@@ -242,7 +253,7 @@ export function InvoicePDF({ invoice }: { invoice: Invoice }) {
   const invoiceCode = `INV-${String(invoice.invoiceNumber).padStart(4, '0')}`;
   const isOverdue =
     invoice.status === 'sent' &&
-    invoice.dueDate < new Date().toISOString().slice(0, 10);
+    invoice.dueDate < todayLocal();
 
   return (
     <Document

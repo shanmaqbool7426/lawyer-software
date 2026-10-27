@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  AppointmentModel,
   CaseModel,
   ClientModel,
   CourtDateModel,
@@ -103,6 +104,7 @@ type PaymentRow = {
   caseId: string;
   amount: number | string;
   date: string;
+  receiptNumber?: string | null;
   method?: string | null;
   reference?: string | null;
   allocationType?: string | null;
@@ -126,6 +128,7 @@ export function toPayment(payment: PaymentRow) {
     caseId:         payment.caseId,
     amount:         asNumber(payment.amount),
     date:           payment.date,
+    receiptNumber:  payment.receiptNumber ?? null,
     method:         payment.method        ?? null,
     reference:      payment.reference     ?? null,
     allocationType: payment.allocationType ?? "General",
@@ -140,16 +143,45 @@ export function toPayment(payment: PaymentRow) {
   };
 }
 
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * The only place cash is netted. Every screen that quotes "received" or "owing"
+ * — the case page, the case list, the dashboard, the client portal and the
+ * reports — goes through here, so the books can never disagree.
+ *
+ * Rules: voided rows are ignored (they never happened), refunds reduce the
+ * total, and the fee is fee + disbursements. Money beyond the fee is a client
+ * credit, not a rounding error to be swallowed.
+ */
+export function caseTotals(
+  row: { totalFee?: number | string | null; disbursements?: number | string | null },
+  payments: PaymentRow[] = [],
+) {
+  const live = payments.filter((payment) => !payment.isVoided);
+  const grossReceived = live
+    .filter((payment) => !payment.isRefund)
+    .reduce((sum, payment) => sum + asNumber(payment.amount), 0);
+  const refunded = live
+    .filter((payment) => payment.isRefund)
+    .reduce((sum, payment) => sum + asNumber(payment.amount), 0);
+  const amountReceived = round2(grossReceived - refunded);
+  const totalOwed = round2(asNumber(row.totalFee) + asNumber(row.disbursements ?? 0));
+  return {
+    totalOwed,
+    grossReceived: round2(grossReceived),
+    refunded: round2(refunded),
+    amountReceived,
+    balanceOwing: Math.max(round2(totalOwed - amountReceived), 0),
+    creditBalance: Math.max(round2(amountReceived - totalOwed), 0),
+    isFullyPaid: amountReceived >= totalOwed,
+  };
+}
+
 export function toCase(row: CaseRow, payments: PaymentRow[] = []) {
-  // Only count non-voided, non-refund payments toward received amount
-  const activePayments = payments.filter((p) => !p.isVoided && !p.isRefund);
-  const refundPayments = payments.filter((p) => !p.isVoided && p.isRefund);
-  const amountReceived =
-    activePayments.reduce((sum, p) => sum + asNumber(p.amount), 0) -
-    refundPayments.reduce((sum, p) => sum + asNumber(p.amount), 0);
+  const money = caseTotals(row, payments);
   const totalFee = asNumber(row.totalFee);
   const disbursements = asNumber(row.disbursements ?? 0);
-  const totalOwed = totalFee + disbursements;
   return {
     id:           row.id,
     caseNumber:   row.caseNumber,
@@ -203,9 +235,11 @@ export function toCase(row: CaseRow, payments: PaymentRow[] = []) {
     setFine:         row.setFine         ?? null,
     victimSurcharge: row.victimSurcharge ?? null,
     disbursements,
-    amountReceived:  Math.round(amountReceived * 100) / 100,
-    balanceOwing:    Math.max(Math.round((totalOwed - amountReceived) * 100) / 100, 0),
-    isFullyPaid:     amountReceived >= totalOwed,
+    totalOwed:       money.totalOwed,
+    amountReceived:  money.amountReceived,
+    balanceOwing:    money.balanceOwing,
+    creditBalance:   money.creditBalance,
+    isFullyPaid:     money.isFullyPaid,
     // Outcome
     status:           row.status,
     outcome:          row.outcome          ?? null,
@@ -387,15 +421,54 @@ export async function getNextCaseNumber(tenantId: string) {
   return counter!.value;
 }
 
+/**
+ * Client receipt number for a payment: "R-2026-0001", one series per firm per
+ * calendar year, keyed off the date the money arrived (not today, so a
+ * back-dated payment still lands in the right year). Counters are atomic, so
+ * two clerks recording at the same moment cannot be handed the same number.
+ */
+export async function getNextReceiptNumber(tenantId: string, dateStr: string) {
+  const year = /^\d{4}/.test(dateStr ?? "")
+    ? dateStr.slice(0, 4)
+    : String(new Date().getFullYear());
+  const counter = await CounterModel.findOneAndUpdate(
+    { key: `receipt:${tenantId}:${year}` },
+    { $inc: { value: 1 } },
+    { upsert: true, new: true },
+  ).lean();
+  return `R-${year}-${String(counter!.value).padStart(4, "0")}`;
+}
+
 export async function createAuditNote(tenantId: string, caseId: string, text: string) {
   await addNote(tenantId, caseId, text);
 }
 
-const daysBetween = (dateStr: string): number =>
-  Math.round((new Date(dateStr).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+// A bare YYYY-MM-DD is a calendar day, not a UTC instant — parsing it with
+// new Date() shifts it a day back in western timezones and made every countdown
+// one day short. Build it from local parts instead.
+const localMidnight = (value: string | Date): number => {
+  const date = value instanceof Date
+    ? new Date(value)
+    : /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10)))
+      : new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+};
+
+const daysBetween = (value: string | Date): number =>
+  Math.round((localMidnight(value) - localMidnight(new Date())) / 86400000);
+
+/** YYYY-MM-DD for the user's calendar, not the UTC instant. */
+const localDateStr = (value: Date): string => {
+  const date = new Date(value);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+};
 
 export type NotificationFeedItem = {
-  kind: "court-date" | "follow-up" | "outstanding" | "signature";
+  kind: "court-date" | "follow-up" | "outstanding" | "signature" | "appointment";
   caseId: string;
   caseNumber: number;
   clientName: string;
@@ -407,13 +480,13 @@ export type NotificationFeedItem = {
 
 /**
  * In-app reminder feed (no email/SMS): court dates in the next two weeks or
- * recently missed, due follow-ups, balances outstanding on stale files and
- * signature requests still waiting.
+ * recently missed, due follow-ups, balances outstanding on stale files,
+ * signature requests still waiting and appointments in the next 48 hours.
  */
 export async function getNotificationFeed(tenantId: string) {
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const weekBack = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  const fortnightAhead = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+  const todayStr = localDateStr(new Date());
+  const weekBack = localDateStr(new Date(Date.now() - 7 * 86400000));
+  const fortnightAhead = localDateStr(new Date(Date.now() + 14 * 86400000));
   const staleBefore = new Date(Date.now() - 30 * 86400000);
 
   const items: NotificationFeedItem[] = [];
@@ -490,6 +563,34 @@ export async function getNotificationFeed(tenantId: string) {
       detail: request.title,
       date: null,
       days: daysBetween(request.createdAt.toISOString().slice(0, 10)),
+    });
+  }
+
+  // Appointments on a file in the next 48 hours that nobody has confirmed yet.
+  const apptHorizon = new Date(Date.now() + 2 * 86400000);
+  const soon = await AppointmentModel.find({
+    tenantId,
+    isDeleted: { $ne: true },
+    caseId: { $ne: null },
+    status: { $in: ["scheduled", "confirmed"] },
+    startAt: { $gte: new Date(), $lte: apptHorizon },
+  })
+    .sort({ startAt: 1 })
+    .lean();
+  for (const appt of soon) {
+    const row = appt.caseId ? caseById.get(appt.caseId) : undefined;
+    if (!row) continue;
+    const when = new Date(appt.startAt);
+    const time = when.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+    items.push({
+      kind: "appointment",
+      caseId: row.id,
+      caseNumber: row.caseNumber,
+      clientName: row.clientName,
+      title: appt.title,
+      detail: `${appt.status === "confirmed" ? "Confirmed" : "Awaiting confirmation"} · ${time}`,
+      date: localDateStr(when),
+      days: daysBetween(when),
     });
   }
 
