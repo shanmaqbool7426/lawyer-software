@@ -71,9 +71,35 @@ export function clerkProxyMiddleware(
     // Take over the response so it can be re-sent with a Content-Length (see
     // proxyRes); the deployment edge rejects chunked proxied responses.
     selfHandleResponse: true,
+    // Never let a stalled upstream burn the whole function budget (30s on
+    // Vercel) and surface as FUNCTION_INVOCATION_TIMEOUT with no clue; fail
+    // with a readable 504 instead.
+    proxyTimeout: 20000,
+    timeout: 20000,
     pathRewrite: (path: string) =>
       path.replace(new RegExp(`^${mountPath}`), ''),
     on: {
+      // Upstream failure or timeout: answer ourselves so the browser gets a
+      // body-less 504 naming the cause instead of a hanging request.
+      error: (err, _req, res) => {
+        const message = String(
+          (err as Error)?.message ?? 'clerk_proxy_error',
+        ).slice(0, 80);
+        // eslint-disable-next-line no-console
+        console.error('[clerk-proxy]', message);
+        const out = res as unknown as {
+          headersSent?: boolean;
+          writeHead?: (status: number, headers: Record<string, string>) => void;
+          end?: () => void;
+        };
+        if (out.writeHead && !out.headersSent) {
+          out.writeHead(504, {
+            'content-length': '0',
+            'x-clerk-proxy-error': message,
+          });
+        }
+        out.end?.();
+      },
       proxyReq: (proxyReq, req) => {
         const protocol = req.headers['x-forwarded-proto'] || 'https';
         const host = getClerkProxyHost(req) || '';
@@ -109,6 +135,20 @@ export function clerkProxyMiddleware(
         // Content-Length is forbidden on 1xx/204; HEAD/304 may keep theirs.
         if (status < 200 || status === 204) {
           delete headers['content-length'];
+        }
+
+        // Clerk answers with root-relative redirects (/v1/oauth_callback,
+        // /npm/...). This proxy is mounted on a sub-path, so passing them on
+        // sends the browser to the site root, where the OAuth handshake has no
+        // handler and the flow dies. Push Clerk endpoints back under the mount;
+        // app redirects (/sign-in, ...) are left alone.
+        const location = headers['location'];
+        if (
+          typeof location === 'string' &&
+          /^\/(v1|npm)\//.test(location) &&
+          !location.startsWith(`${mountPath}/`)
+        ) {
+          headers['location'] = `${mountPath}${location}`;
         }
 
         const bodyless =
