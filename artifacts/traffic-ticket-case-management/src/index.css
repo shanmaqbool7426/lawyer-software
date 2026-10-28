@@ -489,6 +489,19 @@
 .db-row { display:flex; gap:16px; align-items:stretch; }
 .db-row .db-panel { min-width:0; }
 
+/* Dashboard summary row. Four panels side by side collapse to ~215px each on a
+   1280 screen: case titles wrap, amounts detach from their labels and the
+   lead-source axis is squeezed against the card edge. Two columns give every
+   panel real width; only very wide screens earn a four-across row. */
+.db-row-bottom { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
+.db-row-bottom > .db-panel { flex:none; }
+@media (min-width: 1680px) {
+  .db-row-bottom { grid-template-columns:repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .db-row-bottom { grid-template-columns:1fr; }
+}
+
 /* ─── Appointments: week layout ────────────────────────────────────────── */
 .appt-week { display:flex; gap:16px; flex:1; min-height:0; flex-wrap:wrap; align-content:flex-start; }
 .appt-week-side { flex:0 1 236px; width:236px; min-width:210px; display:flex; flex-direction:column; gap:14px; }
