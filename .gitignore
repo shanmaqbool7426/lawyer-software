@@ -55,7 +55,6 @@ temp_interactive_push.bat
 qa-shots/
 
 # Local env files & Clerk accountless state (never commit keys)
-.env
-.env.local
 .env.*.local
 .clerk/
+config.bat

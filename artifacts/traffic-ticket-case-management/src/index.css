@@ -491,13 +491,11 @@
 
 /* Dashboard summary row. Four panels side by side collapse to ~215px each on a
    1280 screen: case titles wrap, amounts detach from their labels and the
-   lead-source axis is squeezed against the card edge. Two columns give every
-   panel real width; only very wide screens earn a four-across row. */
+   lead-source axis is squeezed against the card edge. The page column caps at
+   1440px, so four-across never earns more than ~330px per panel even on a wide
+   monitor; two columns is the layout at every width. */
 .db-row-bottom { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; }
-.db-row-bottom > .db-panel { flex:none; }
-@media (min-width: 1680px) {
-  .db-row-bottom { grid-template-columns:repeat(4, minmax(0, 1fr)); }
-}
+.db-row-bottom > .db-panel { min-width:0; }
 @media (max-width: 900px) {
   .db-row-bottom { grid-template-columns:1fr; }
 }
@@ -521,11 +519,10 @@
   .kpi-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .db-row-top    { flex-wrap:wrap; }
   .db-row-top    .db-panel[style*="flex: 2.2"] { flex:1 1 100% !important; }
-  .db-row-bottom { flex-wrap:wrap; }
 }
 @media (max-width: 980px) {
   .kpi-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .db-row-top, .db-row-bottom { flex-direction:column; }
+  .db-row-top { flex-direction:column; }
   .db-revenue-summary { flex-wrap:wrap; gap:12px; }
   .db-rev-divider { display:none; }
   .db-rev-item { padding:0; flex:1 1 40%; }
